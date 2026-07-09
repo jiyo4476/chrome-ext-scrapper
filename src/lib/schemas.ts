@@ -46,7 +46,10 @@ export const jobDraftSchema = z.object({
   job_location: z.string().min(1).optional(),
   is_remote: z.boolean().optional(),
   job_description: z.string().optional(),
-  date_posted: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  date_posted: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   salary_text: z.string().min(1).optional(),
   salary_type: salaryTypeSchema.optional(),
   salary_min: z.number().int().nonnegative().optional(),
@@ -60,9 +63,7 @@ export const jobDraftSchema = z.object({
   software: z.array(z.string()).optional(),
   keywords: z.array(z.string()).optional(),
   certifications: z.array(z.string()).optional(),
-  extraction_confidence: z
-    .record(z.enum(['high', 'medium', 'low']))
-    .optional(),
+  extraction_confidence: z.record(z.enum(['high', 'medium', 'low'])).optional(),
 });
 
 export const scrapePayloadSchema = jobDraftSchema

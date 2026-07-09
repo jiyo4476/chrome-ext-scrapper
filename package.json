@@ -9,8 +9,11 @@
     "build": "wxt build",
     "zip": "wxt zip",
     "compile": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "vitest run",
-    "quality": "npm run compile && npm run test && npm run build",
+    "quality": "npm run format:check && npm run lint && npm run compile && npm run test && npm run build",
     "postinstall": "wxt prepare"
   },
   "dependencies": {
@@ -24,7 +27,11 @@
   },
   "devDependencies": {
     "@types/chrome": "^0.0.326",
+    "eslint": "^10.6.0",
+    "globals": "^17.7.0",
+    "prettier": "^3.9.4",
     "typescript": "^5.8.3",
+    "typescript-eslint": "^8.63.0",
     "vitest": "^3.2.4",
     "wxt": "^0.20.27"
   }

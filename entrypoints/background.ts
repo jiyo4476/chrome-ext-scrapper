@@ -1,16 +1,22 @@
 import { browser } from 'wxt/browser';
 import {
+  type ExtensionErrorCode,
   type ExtensionMessage,
   type ExtensionResponse,
   extensionMessageSchema,
 } from '../src/lib/messages';
-import type { JobDraft } from '../src/lib/schemas';
+import { ApiClientError, postScrapePayload } from '../src/lib/apiClient';
+import { buildScrapePayload } from '../src/lib/payload';
+import { type JobDraft, jobDraftSchema } from '../src/lib/schemas';
+import { getSettings, saveSettings } from '../src/lib/settings';
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((message: unknown) => {
     const parsed = extensionMessageSchema.safeParse(message);
     if (!parsed.success) {
-      return Promise.resolve(errorResponse('MESSAGE_INVALID', 'Unexpected extension message.'));
+      return Promise.resolve(
+        errorResponse('MESSAGE_INVALID', 'Unexpected extension message.'),
+      );
     }
 
     return handleMessage(parsed.data);
@@ -24,7 +30,24 @@ async function handleMessage(
     return extractActiveTab();
   }
 
-  return errorResponse('MESSAGE_UNHANDLED', 'No handler is available for this action.');
+  if (message.type === 'SAVE_JOB') {
+    return saveJob(message.draft);
+  }
+
+  if (message.type === 'GET_SETTINGS') {
+    const settings = await getSettings();
+    return { type: 'GET_SETTINGS_RESULT', ok: true, settings };
+  }
+
+  if (message.type === 'SAVE_SETTINGS') {
+    const settings = await saveSettings(message.settings);
+    return { type: 'SAVE_SETTINGS_RESULT', ok: true, settings };
+  }
+
+  return errorResponse(
+    'MESSAGE_UNHANDLED',
+    'No handler is available for this action.',
+  );
 }
 
 async function extractActiveTab(): Promise<ExtensionResponse> {
@@ -41,10 +64,25 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
 
     const draft = result?.result;
     if (!draft) {
-      return errorResponse('EXTRACT_EMPTY', 'No job data was found on this page.');
+      return errorResponse(
+        'EXTRACT_EMPTY',
+        'No job data was found on this page.',
+      );
     }
 
-    return { ok: true, draft };
+    const parsedDraft = jobDraftSchema.safeParse(draft);
+    if (!parsedDraft.success) {
+      return errorResponse(
+        'EXTRACT_FAILED',
+        'The page returned job data in an unexpected shape.',
+      );
+    }
+
+    return {
+      type: 'EXTRACT_ACTIVE_TAB_RESULT',
+      ok: true,
+      draft: parsedDraft.data,
+    };
   } catch {
     return errorResponse(
       'EXTRACT_FAILED',
@@ -53,8 +91,31 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
   }
 }
 
-function errorResponse(code: string, message: string): ExtensionResponse {
-  return { ok: false, error: { code, message } };
+async function saveJob(draft: JobDraft): Promise<ExtensionResponse> {
+  try {
+    const payload = buildScrapePayload(draft);
+    const settings = await getSettings();
+    const result = await postScrapePayload(settings, payload);
+    return { type: 'SAVE_JOB_RESULT', ok: true, payload, result };
+  } catch (error) {
+    if (error instanceof ApiClientError) {
+      return errorResponse(error.code, error.message, error.details);
+    }
+
+    return errorResponse(
+      'PAYLOAD_INVALID',
+      'Review the required fields before saving this job.',
+      error instanceof Error ? error.message : undefined,
+    );
+  }
+}
+
+function errorResponse(
+  code: ExtensionErrorCode,
+  message: string,
+  details?: string,
+): ExtensionResponse {
+  return { type: 'ERROR', ok: false, error: { code, message, details } };
 }
 
 function collectVisibleJobDraft(): JobDraft {
@@ -65,7 +126,9 @@ function collectVisibleJobDraft(): JobDraft {
 
   const meta = (name: string): string | undefined => {
     const selector = `meta[name="${name}"], meta[property="${name}"]`;
-    const value = document.querySelector<HTMLMetaElement>(selector)?.content?.trim();
+    const value = document
+      .querySelector<HTMLMetaElement>(selector)
+      ?.content?.trim();
     return value || undefined;
   };
 
@@ -74,7 +137,8 @@ function collectVisibleJobDraft(): JobDraft {
     location.href;
   const host = location.hostname.toLowerCase();
   const title = text('h1') || meta('og:title') || document.title;
-  const description = meta('description') || meta('og:description') || text('main');
+  const description =
+    meta('description') || meta('og:description') || text('main');
 
   return {
     source_platform: detectPlatform(host, location.href),
@@ -91,7 +155,10 @@ function collectVisibleJobDraft(): JobDraft {
   };
 }
 
-function detectPlatform(host: string, url: string): JobDraft['source_platform'] {
+function detectPlatform(
+  host: string,
+  url: string,
+): JobDraft['source_platform'] {
   if (host.includes('linkedin.com')) return 'linkedin';
   if (host.includes('indeed.com')) return 'indeed';
   if (host.includes('glassdoor.com')) return 'glassdoor';
@@ -99,9 +166,13 @@ function detectPlatform(host: string, url: string): JobDraft['source_platform'] 
   if (host.includes('greenhouse.io')) return 'greenhouse';
   if (host.includes('lever.co')) return 'lever';
   if (host.includes('myworkdayjobs.com')) return 'workday';
-  if (host.includes('wellfound.com') || host.includes('angel.co')) return 'angellist';
+  if (host.includes('wellfound.com') || host.includes('angel.co'))
+    return 'angellist';
   if (host.includes('google.') && url.includes('ibp=htl')) return 'google';
-  if (url.toLowerCase().includes('career') || url.toLowerCase().includes('job')) {
+  if (
+    url.toLowerCase().includes('career') ||
+    url.toLowerCase().includes('job')
+  ) {
     return 'direct';
   }
   return 'other';
@@ -115,5 +186,7 @@ function inferExternalId(url: string, title?: string): string {
   const pathId = parsed.pathname.split('/').filter(Boolean).at(-1);
   if (pathId) return pathId.replace(/[^a-zA-Z0-9_-]/g, '-');
 
-  return `${parsed.hostname}-${title || 'job'}`.toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+  return `${parsed.hostname}-${title || 'job'}`
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-');
 }

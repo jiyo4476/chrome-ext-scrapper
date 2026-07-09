@@ -7,6 +7,7 @@ export default defineConfig({
     version: '0.1.0',
     permissions: ['activeTab', 'scripting', 'storage'],
     host_permissions: ['http://localhost:3000/*'],
+    optional_host_permissions: ['http://*/*', 'https://*/*'],
     action: {
       default_title: 'Save job to Job Tracker',
     },
