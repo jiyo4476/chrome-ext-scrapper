@@ -5,8 +5,8 @@ export default defineConfig({
     name: 'Job Tracker Capture',
     description: 'Review and save visible job postings into Job Tracker.',
     version: '0.1.0',
-    permissions: ['activeTab', 'scripting', 'storage'],
-    host_permissions: ['http://localhost:3000/*'],
+    permissions: ['activeTab', 'identity', 'scripting', 'storage'],
+    host_permissions: ['http://localhost:3000/*', 'https://auth.yjimmy.dev/*'],
     optional_host_permissions: ['http://*/*', 'https://*/*'],
     action: {
       default_title: 'Save job to Job Tracker',

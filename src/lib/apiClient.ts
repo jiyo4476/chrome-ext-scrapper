@@ -76,9 +76,9 @@ function buildHeaders(settings: ExtensionSettings): HeadersInit {
     'Content-Type': 'application/json',
   };
 
-  const apiKey = settings.apiKey.trim();
-  if (apiKey) {
-    headers.Authorization = `Bearer ${apiKey}`;
+  const accessToken = settings.oauthAccessToken.trim();
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
   }
 
   return headers;

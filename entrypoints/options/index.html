@@ -16,14 +16,23 @@
           <input id="api-base-url" name="apiBaseUrl" type="url" required />
         </label>
         <label>
-          API Key
+          Authentik URL
           <input
-            id="api-key"
-            name="apiKey"
-            type="password"
-            autocomplete="off"
+            id="authentik-base-url"
+            name="authentikBaseUrl"
+            type="url"
+            required
           />
         </label>
+        <label>
+          OAuth Client ID
+          <input id="oauth-client-id" name="oauthClientId" required />
+        </label>
+        <label>
+          OAuth Scope
+          <input id="oauth-scope" name="oauthScope" required />
+        </label>
+        <button id="oauth-sign-in" type="button">Sign in with Authentik</button>
         <label class="row">
           <input id="auto-detect" name="autoDetect" type="checkbox" />
           Auto-detect likely job pages

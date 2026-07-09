@@ -6,6 +6,7 @@ import {
   extensionMessageSchema,
 } from '../src/lib/messages';
 import { ApiClientError, postScrapePayload } from '../src/lib/apiClient';
+import { getValidAccessToken, signInWithAuthentik } from '../src/lib/oauth';
 import { buildScrapePayload } from '../src/lib/payload';
 import { type JobDraft, jobDraftSchema } from '../src/lib/schemas';
 import { getSettings, saveSettings } from '../src/lib/settings';
@@ -42,6 +43,19 @@ async function handleMessage(
   if (message.type === 'SAVE_SETTINGS') {
     const settings = await saveSettings(message.settings);
     return { type: 'SAVE_SETTINGS_RESULT', ok: true, settings };
+  }
+
+  if (message.type === 'OAUTH_SIGN_IN') {
+    try {
+      const settings = await signInWithAuthentik(await getSettings());
+      return { type: 'SAVE_SETTINGS_RESULT', ok: true, settings };
+    } catch (error) {
+      return errorResponse(
+        'OAUTH_FAILED',
+        'Authentik sign-in failed.',
+        error instanceof Error ? error.message : undefined,
+      );
+    }
   }
 
   return errorResponse(
@@ -95,11 +109,23 @@ async function saveJob(draft: JobDraft): Promise<ExtensionResponse> {
   try {
     const payload = buildScrapePayload(draft);
     const settings = await getSettings();
-    const result = await postScrapePayload(settings, payload);
+    const accessToken = await getValidAccessToken(settings);
+    const result = await postScrapePayload(
+      { ...settings, oauthAccessToken: accessToken },
+      payload,
+    );
     return { type: 'SAVE_JOB_RESULT', ok: true, payload, result };
   } catch (error) {
     if (error instanceof ApiClientError) {
       return errorResponse(error.code, error.message, error.details);
+    }
+
+    if (error instanceof Error && error.message.includes('Authentik')) {
+      return errorResponse('OAUTH_FAILED', error.message);
+    }
+
+    if (error instanceof Error && error.message.includes('Sign in')) {
+      return errorResponse('OAUTH_FAILED', error.message);
     }
 
     return errorResponse(

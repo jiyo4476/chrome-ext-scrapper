@@ -1,17 +1,28 @@
 import { browser } from 'wxt/browser';
 import '../styles.css';
-import { DEFAULT_API_BASE_URL } from '../../src/lib/settings';
+import {
+  DEFAULT_API_BASE_URL,
+  DEFAULT_AUTHENTIK_BASE_URL,
+  DEFAULT_OAUTH_CLIENT_ID,
+  DEFAULT_OAUTH_SCOPE,
+} from '../../src/lib/settings';
 import { extensionResponseSchema } from '../../src/lib/messages';
 import { toOriginPermissionPattern } from '../../src/lib/origins';
 
 const form = document.querySelector<HTMLFormElement>('#settings-form');
 const statusEl = document.querySelector<HTMLDivElement>('#status');
+const signInButton =
+  document.querySelector<HTMLButtonElement>('#oauth-sign-in');
 
 void loadSettings();
 
 form?.addEventListener('submit', (event) => {
   event.preventDefault();
   void persistSettings();
+});
+
+signInButton?.addEventListener('click', () => {
+  void signInWithAuthentik();
 });
 
 async function loadSettings(): Promise<void> {
@@ -28,8 +39,17 @@ async function loadSettings(): Promise<void> {
 
   const settings = response.settings;
   setInputValue('#api-base-url', settings.apiBaseUrl || DEFAULT_API_BASE_URL);
-  setInputValue('#api-key', settings.apiKey);
+  setInputValue(
+    '#authentik-base-url',
+    settings.authentikBaseUrl || DEFAULT_AUTHENTIK_BASE_URL,
+  );
+  setInputValue(
+    '#oauth-client-id',
+    settings.oauthClientId || DEFAULT_OAUTH_CLIENT_ID,
+  );
+  setInputValue('#oauth-scope', settings.oauthScope || DEFAULT_OAUTH_SCOPE);
   setChecked('#auto-detect', settings.autoDetect);
+  if (settings.oauthAccessToken) setStatus('Signed in with Authentik.');
 }
 
 async function persistSettings(): Promise<void> {
@@ -44,7 +64,11 @@ async function persistSettings(): Promise<void> {
     type: 'SAVE_SETTINGS',
     settings: {
       apiBaseUrl,
-      apiKey: getInputValue('#api-key'),
+      authentikBaseUrl:
+        getInputValue('#authentik-base-url') || DEFAULT_AUTHENTIK_BASE_URL,
+      oauthClientId:
+        getInputValue('#oauth-client-id') || DEFAULT_OAUTH_CLIENT_ID,
+      oauthScope: getInputValue('#oauth-scope') || DEFAULT_OAUTH_SCOPE,
       autoDetect: getChecked('#auto-detect'),
     },
   });
@@ -58,6 +82,22 @@ async function persistSettings(): Promise<void> {
   }
 
   setStatus(`Saved settings for ${response.settings.apiBaseUrl}.`);
+}
+
+async function signInWithAuthentik(): Promise<void> {
+  await persistSettings();
+  const rawResponse: unknown = await browser.runtime.sendMessage({
+    type: 'OAUTH_SIGN_IN',
+  });
+  const response = extensionResponseSchema.parse(rawResponse);
+  if (!response.ok || response.type !== 'SAVE_SETTINGS_RESULT') {
+    setStatus(
+      !response.ok ? response.error.message : 'Could not complete sign-in.',
+    );
+    return;
+  }
+
+  setStatus('Signed in with Authentik.');
 }
 
 async function ensureApiHostPermission(apiBaseUrl: string): Promise<boolean> {
