@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Job Tracker Capture Settings</title>
+    <script type="module" src="./main.ts"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Settings</h1>
+      <section id="status" role="status"></section>
+      <form id="settings-form">
+        <label>
+          API Base URL
+          <input id="api-base-url" name="apiBaseUrl" type="url" required />
+        </label>
+        <label>
+          API Key
+          <input id="api-key" name="apiKey" type="password" autocomplete="off" />
+        </label>
+        <label class="row">
+          <input id="auto-detect" name="autoDetect" type="checkbox" />
+          Auto-detect likely job pages
+        </label>
+        <button type="submit">Save Settings</button>
+      </form>
+    </main>
+  </body>
+</html>

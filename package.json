@@ -1,0 +1,31 @@
+{
+  "name": "job-tracker-chrome-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Chrome extension for saving visible job postings into the Job Tracker API.",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "compile": "tsc --noEmit",
+    "test": "vitest run",
+    "quality": "npm run compile && npm run test && npm run build",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1",
+    "shell-quote": "^1.9.0",
+    "tmp": "^0.2.7",
+    "uuid": "^14.0.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.326",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4",
+    "wxt": "^0.20.27"
+  }
+}
