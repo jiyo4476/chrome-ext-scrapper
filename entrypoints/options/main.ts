@@ -2,6 +2,7 @@ import { browser } from 'wxt/browser';
 import '../styles.css';
 import { DEFAULT_API_BASE_URL } from '../../src/lib/settings';
 import { extensionResponseSchema } from '../../src/lib/messages';
+import { toOriginPermissionPattern } from '../../src/lib/origins';
 
 const form = document.querySelector<HTMLFormElement>('#settings-form');
 const statusEl = document.querySelector<HTMLDivElement>('#status');
@@ -32,10 +33,17 @@ async function loadSettings(): Promise<void> {
 }
 
 async function persistSettings(): Promise<void> {
+  const apiBaseUrl = getInputValue('#api-base-url') || DEFAULT_API_BASE_URL;
+  const permissionGranted = await ensureApiHostPermission(apiBaseUrl);
+  if (!permissionGranted) {
+    setStatus('Allow API access before saving these settings.');
+    return;
+  }
+
   const rawResponse: unknown = await browser.runtime.sendMessage({
     type: 'SAVE_SETTINGS',
     settings: {
-      apiBaseUrl: getInputValue('#api-base-url') || DEFAULT_API_BASE_URL,
+      apiBaseUrl,
       apiKey: getInputValue('#api-key'),
       autoDetect: getChecked('#auto-detect'),
     },
@@ -50,6 +58,14 @@ async function persistSettings(): Promise<void> {
   }
 
   setStatus(`Saved settings for ${response.settings.apiBaseUrl}.`);
+}
+
+async function ensureApiHostPermission(apiBaseUrl: string): Promise<boolean> {
+  const origins = [toOriginPermissionPattern(apiBaseUrl)];
+  const hasPermission = await browser.permissions.contains({ origins });
+  if (hasPermission) return true;
+
+  return browser.permissions.request({ origins });
 }
 
 function getInputValue(selector: string): string {
