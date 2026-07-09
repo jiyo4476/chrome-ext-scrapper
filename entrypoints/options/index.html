@@ -8,36 +8,49 @@
   </head>
   <body>
     <main>
-      <h1>Settings</h1>
+      <header>
+        <h1>Job Tracker Capture</h1>
+      </header>
       <section id="status" role="status"></section>
       <form id="settings-form">
-        <label>
-          API Base URL
-          <input id="api-base-url" name="apiBaseUrl" type="url" required />
-        </label>
-        <label>
-          Authentik URL
-          <input
-            id="authentik-base-url"
-            name="authentikBaseUrl"
-            type="url"
-            required
-          />
-        </label>
-        <label>
-          OAuth Client ID
-          <input id="oauth-client-id" name="oauthClientId" required />
-        </label>
-        <label>
-          OAuth Scope
-          <input id="oauth-scope" name="oauthScope" required />
-        </label>
-        <button id="oauth-sign-in" type="button">Sign in with Authentik</button>
+        <section class="settings-section">
+          <label>
+            Job Tracker URL
+            <input id="api-base-url" name="apiBaseUrl" type="url" required />
+          </label>
+          <button id="oauth-sign-in" type="button">
+            Sign in with Authentik
+          </button>
+        </section>
+
+        <details>
+          <summary>Advanced OAuth</summary>
+          <div class="settings-section">
+            <label>
+              Authentik URL
+              <input
+                id="authentik-base-url"
+                name="authentikBaseUrl"
+                type="url"
+                required
+              />
+            </label>
+            <label>
+              Client ID
+              <input id="oauth-client-id" name="oauthClientId" required />
+            </label>
+            <label>
+              Scope
+              <input id="oauth-scope" name="oauthScope" required />
+            </label>
+          </div>
+        </details>
+
         <label class="row">
           <input id="auto-detect" name="autoDetect" type="checkbox" />
           Auto-detect likely job pages
         </label>
-        <button type="submit">Save Settings</button>
+        <button type="submit">Save</button>
       </form>
     </main>
   </body>

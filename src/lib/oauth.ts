@@ -1,14 +1,11 @@
 import { browser } from 'wxt/browser';
-import {
-  type ExtensionSettings,
-  saveSettings,
-} from './settings';
+import { type ExtensionSettings, saveSettings } from './settings';
 
-type TokenResponse = {
+interface TokenResponse {
   access_token?: unknown;
   refresh_token?: unknown;
   expires_in?: unknown;
-};
+}
 
 const TOKEN_REFRESH_SKEW_MS = 60_000;
 
@@ -16,15 +13,20 @@ export async function signInWithAuthentik(
   settings: ExtensionSettings,
 ): Promise<ExtensionSettings> {
   const verifier = randomString(64);
+  const state = randomString(32);
   const challenge = await sha256Base64Url(verifier);
   const redirectUri = browser.identity.getRedirectURL();
-  const authorizeUrl = new URL('/application/o/authorize/', settings.authentikBaseUrl);
+  const authorizeUrl = new URL(
+    '/application/o/authorize/',
+    settings.authentikBaseUrl,
+  );
   authorizeUrl.searchParams.set('response_type', 'code');
   authorizeUrl.searchParams.set('client_id', settings.oauthClientId);
   authorizeUrl.searchParams.set('redirect_uri', redirectUri);
   authorizeUrl.searchParams.set('scope', settings.oauthScope);
   authorizeUrl.searchParams.set('code_challenge', challenge);
   authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+  authorizeUrl.searchParams.set('state', state);
 
   const callbackUrl = await browser.identity.launchWebAuthFlow({
     url: authorizeUrl.toString(),
@@ -34,6 +36,11 @@ export async function signInWithAuthentik(
 
   const code = new URL(callbackUrl).searchParams.get('code');
   if (!code) throw new Error('Authentik did not return an authorization code.');
+
+  const callbackState = new URL(callbackUrl).searchParams.get('state');
+  if (callbackState !== state) {
+    throw new Error('Authentik sign-in returned an invalid state value.');
+  }
 
   return exchangeToken(settings, {
     grant_type: 'authorization_code',
@@ -83,16 +90,22 @@ async function exchangeToken(
     body,
   });
   if (!response.ok) {
-    throw new Error(`Authentik token exchange failed with HTTP ${response.status}.`);
+    throw new Error(
+      `Authentik token exchange failed with HTTP ${String(response.status)}.`,
+    );
   }
 
   const tokenResponse = (await response.json()) as TokenResponse;
   if (typeof tokenResponse.access_token !== 'string') {
-    throw new Error('Authentik token response did not include an access token.');
+    throw new Error(
+      'Authentik token response did not include an access token.',
+    );
   }
 
   const expiresIn =
-    typeof tokenResponse.expires_in === 'number' ? tokenResponse.expires_in : 300;
+    typeof tokenResponse.expires_in === 'number'
+      ? tokenResponse.expires_in
+      : 300;
   return saveSettings({
     ...settings,
     oauthAccessToken: tokenResponse.access_token,
@@ -118,5 +131,8 @@ async function sha256Base64Url(value: string): Promise<string> {
 function base64Url(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return btoa(binary)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
 }
