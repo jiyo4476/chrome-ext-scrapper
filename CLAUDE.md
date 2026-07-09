@@ -1,30 +1,66 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance when working in this repository.
 
 ---
 
 ## Status
 
-**No extension code yet.** This repo contains only `.gitignore`, `LICENSE`, and agent scaffolding (`.agents/`, `.claude/`). It is the planned home of a Chrome extension that captures a job posting from the active tab and POSTs it to the existing job tracker API. Do not assume a build system, framework, or file layout — none has been chosen.
+This repo is a standalone WXT Manifest V3 TypeScript extension for saving the active browser tab's visible job posting into the Job Tracker API.
+
+Current foundation:
+
+- WXT project at the repo root with popup, options, and background entrypoints.
+- Runtime message validation with Zod.
+- User-triggered active-tab extraction through `chrome.scripting.executeScript`.
+- Settings persisted in `chrome.storage.local` for API base URL, API key, and auto-detect preference.
+- Background save flow posts validated payloads to `POST /api/scrape`.
+- Starter HTML fixtures live under `fixtures/html/`.
+- Quality command: `npm run quality`.
+
+Build output is generated under `.output/` and should not be treated as source.
 
 ---
 
-## The API Contract (settled — build against this)
+## Common Commands
+
+```bash
+npm run dev
+npm run quality
+npm run build
+npm run zip
+```
+
+`npm run quality` runs Prettier check, ESLint, TypeScript compile, Vitest, and WXT build.
+
+---
+
+## The API Contract
 
 Documented in the workspace vault at `../.obsidian/App/API Reference.md`; implemented at `../job-tracker-nextjs/src/app/api/scrape/route.ts` with the Zod schema in `../job-tracker-nextjs/src/lib/schemas.ts`.
 
 - **Endpoint:** `POST /api/scrape` on the Next.js app (default `http://localhost:3000`), header `Authorization: Bearer <API_KEY>`.
 - **Required fields:** `source_platform` (enum: `linkedin|indeed|glassdoor|dice|lever|greenhouse|workday|angellist|direct|other`), `external_job_id`, `company_name`, `job_title`, `job_link` (URL).
-- **Response:** always `{ action: 'created' | 'updated' | 'duplicate_skipped', job_id }`. `duplicate_skipped` returns the *existing* job's id. Use `job_id` to render an "Open in Job Tracker" link to `{BASE_URL}/jobs/{job_id}`.
-- **Tags:** `skills`, `software`, `keywords`, `certifications` arrays default to `[]`. Do **not** extract tags client-side — send `job_description` and leave `skills` empty/omitted; the server runs NLP extraction when `skills` is empty and `job_description` is present.
+- **Response:** always `{ action: 'created' | 'updated' | 'duplicate_skipped', job_id }`. Use `job_id` to render an "Open in Job Tracker" link to `{BASE_URL}/jobs/{job_id}`.
+- **Auth probe:** `GET /api/health/auth` returns `{ ok: true }` when the configured bearer key is accepted and `401 { error: 'Unauthorized' }` when rejected.
+- **Tags:** `skills`, `software`, `keywords`, `certifications` arrays default to `[]`. Prefer sending `job_description` and leaving `skills` empty/omitted so the server can run NLP extraction.
 - **Omit `posting_md_path`:** that field belongs to the Python scraper, which writes markdown files into a shared `postings/` volume the extension cannot access.
-- **Salary:** annual salaries are integer **cents** (`salary_min`/`salary_max`); hourly rates are decimal dollars (`hourly_rate_min`/`hourly_rate_max`), with `salary_type: 'annual' | 'hourly'`. When unsure how to parse, send `salary_text` (raw string) and omit the numeric fields.
-- **Dedup is server-authoritative:** `UNIQUE(external_job_id, source_platform)` plus a 7-day fuzzy match on `(company, title)`. The extension needs no local dedup.
-- **Auth probe:** a `GET /api/health/auth` endpoint for validating a configured API key from the extension's settings UI is planned but **not yet built** (task API-009: `../.obsidian/Tasks/API-009 Auth health check endpoint.md`). Until it exists there is no safe auth probe.
+- **Salary:** annual salaries are integer cents (`salary_min`/`salary_max`); hourly rates are decimal dollars (`hourly_rate_min`/`hourly_rate_max`), with `salary_type: 'annual' | 'hourly'`. When unsure how to parse, send `salary_text` and omit numeric fields.
+- **Google Jobs:** map detected Google Jobs pages to `source_platform: 'other'` until the backend enum adds `google` (tracked as API-010).
+- **Dedup is server-authoritative:** the extension needs no local dedup.
+
+---
+
+## Security Boundaries
+
+- Keep API keys in extension/background/settings context only; never pass them into page-injected extraction functions.
+- Use `activeTab` + user-triggered script execution for page reads. Avoid broad persistent host permissions unless a specific feature requires them.
+- Render scraped values as text, never as HTML.
+- Do not execute remote code or page-provided scripts.
+- Keep extension settings and scraped payloads out of logs unless redacted.
 
 ---
 
 ## Workspace Context
 
-This repo is one of three in the `job_tracker` workspace — see `../CLAUDE.md` for the cross-project picture. Design docs and task tracking live in the Obsidian vault at `../.obsidian/`.
+This repo is one of three in the `job_tracker` workspace; see `../CLAUDE.md` for the cross-project picture. Design docs and task tracking live in the Obsidian vault at `../.obsidian/`.
