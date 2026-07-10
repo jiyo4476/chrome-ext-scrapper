@@ -15,6 +15,7 @@ export const extensionErrorCodeSchema = z.enum([
   'API_VALIDATION_FAILED',
   'API_NETWORK_FAILED',
   'API_UNEXPECTED_RESPONSE',
+  'OAUTH_FAILED',
 ]);
 
 export const extensionErrorSchema = z.object({
@@ -39,6 +40,10 @@ export const getSettingsRequestSchema = z.object({
 export const saveSettingsRequestSchema = z.object({
   type: z.literal('SAVE_SETTINGS'),
   settings: extensionSettingsSchema,
+});
+
+export const oauthSignInRequestSchema = z.object({
+  type: z.literal('OAUTH_SIGN_IN'),
 });
 
 export const extractActiveTabResponseSchema = z.object({
@@ -87,6 +92,7 @@ export const extensionMessageSchema = z.discriminatedUnion('type', [
   saveJobRequestSchema,
   getSettingsRequestSchema,
   saveSettingsRequestSchema,
+  oauthSignInRequestSchema,
 ]);
 
 export const extensionResponseSchema = z.union([

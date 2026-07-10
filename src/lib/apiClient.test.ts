@@ -15,7 +15,7 @@ describe('postScrapePayload', () => {
     vi.unstubAllGlobals();
   });
 
-  it('posts to /api/scrape with bearer auth', async () => {
+  it('posts to /api/scrape with OAuth bearer auth', async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(
         new Response(JSON.stringify({ action: 'created', job_id: 'job-1' }), {
@@ -30,7 +30,13 @@ describe('postScrapePayload', () => {
       postScrapePayload(
         {
           apiBaseUrl: 'http://localhost:3000/',
-          apiKey: 'secret',
+          authentikBaseUrl: 'https://auth.yjimmy.dev',
+          oauthClientId: 'job-tracker-extension',
+          oauthScope: 'openid profile email',
+          oauthAccessToken: 'oauth-token',
+          oauthRefreshToken: '',
+          oauthExpiresAt: Date.now() + 300_000,
+          apiKey: '',
           autoDetect: false,
         },
         payload,
@@ -42,7 +48,7 @@ describe('postScrapePayload', () => {
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
-        Authorization: 'Bearer secret',
+        Authorization: 'Bearer oauth-token',
       },
       body: JSON.stringify(payload),
     });
@@ -58,7 +64,13 @@ describe('postScrapePayload', () => {
       postScrapePayload(
         {
           apiBaseUrl: 'http://localhost:3000',
-          apiKey: 'bad-token',
+          authentikBaseUrl: 'https://auth.yjimmy.dev',
+          oauthClientId: 'job-tracker-extension',
+          oauthScope: 'openid profile email',
+          oauthAccessToken: 'bad-token',
+          oauthRefreshToken: '',
+          oauthExpiresAt: Date.now() + 300_000,
+          apiKey: '',
           autoDetect: false,
         },
         payload,

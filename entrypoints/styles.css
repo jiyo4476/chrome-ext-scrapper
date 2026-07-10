@@ -21,7 +21,9 @@ body {
 main {
   display: grid;
   gap: 14px;
+  max-width: 560px;
   padding: 16px;
+  width: min(100%, 560px);
 }
 
 header,
@@ -45,7 +47,7 @@ a {
 
 form {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 label {
@@ -53,10 +55,16 @@ label {
   gap: 4px;
 }
 
+.settings-section {
+  display: grid;
+  gap: 10px;
+}
+
 .row {
   align-items: center;
   display: flex;
   gap: 8px;
+  justify-content: flex-start;
 }
 
 input,
@@ -74,6 +82,14 @@ textarea {
   resize: vertical;
 }
 
+input[type='checkbox'] {
+  flex: 0 0 auto;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  width: 16px;
+}
+
 button {
   border: 1px solid color-mix(in srgb, CanvasText 22%, Canvas);
   border-radius: 6px;
@@ -86,6 +102,20 @@ button {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+details {
+  border-block: 1px solid color-mix(in srgb, CanvasText 14%, Canvas);
+  padding-block: 10px;
+}
+
+summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+details[open] summary {
+  margin-bottom: 10px;
 }
 
 #status {
