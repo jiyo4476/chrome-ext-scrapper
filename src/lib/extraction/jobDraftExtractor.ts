@@ -465,6 +465,17 @@ export async function extractJobDraft(detection: {
     );
   }
 
+  async function extractLinkedinDom(): Promise<void> {
+    // The employer's own profile link is the only stable, hash-free signal
+    // for company name on LinkedIn's job pages -- the visible text near the
+    // title is otherwise laid out with classnames that rotate per deploy.
+    const [companyEl] = await waitForEach(
+      [['a[href^="https://www.linkedin.com/company/"]']],
+      800,
+    );
+    addCandidate('company_name', textOf(companyEl), 'dom', 'high');
+  }
+
   const GOOGLE_JOB_HEADING_SELECTOR =
     '[role="heading"][aria-level="2"], [role="heading"][aria-level="3"]';
   const MAX_PLAUSIBLE_COMPANY_NAME_LENGTH = 80;
@@ -739,6 +750,7 @@ export async function extractJobDraft(detection: {
   const platformDomExtractors: Partial<
     Record<ApiSourcePlatform, () => Promise<void>>
   > = {
+    linkedin: extractLinkedinDom,
     indeed: extractIndeedDom,
     glassdoor: extractGlassdoorDom,
     google: extractGoogleJobsDom,

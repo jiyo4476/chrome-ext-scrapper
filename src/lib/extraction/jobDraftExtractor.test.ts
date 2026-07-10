@@ -281,12 +281,12 @@ describe('extractJobDraft — OpenGraph fallback', () => {
       <meta property="og:site_name" content="Indeed" />
     `);
 
-    // Use a job-board platform with no dom-extraction block (linkedin) so
-    // this test isn't incidentally taxed by another platform's dynamic-wait
+    // Use a job-board platform with no dom-extraction block (dice) so this
+    // test isn't incidentally taxed by another platform's dynamic-wait
     // timeout -- the guard itself is platform-agnostic across the whole
     // JOB_BOARD_PLATFORMS set, which is exercised more broadly below.
     const { draft } = await extractJobDraft({
-      platform: 'linkedin',
+      platform: 'dice',
       confidence: 'high',
     });
 
@@ -432,6 +432,50 @@ describe('extractJobDraft — merge priority', () => {
       'jsonld',
       'visible-text',
     ]);
+  });
+});
+
+describe('extractJobDraft — LinkedIn DOM extraction', () => {
+  const LINKEDIN = {
+    platform: 'linkedin' as const,
+    confidence: 'high' as const,
+  };
+
+  it('extracts company_name from the employer profile link', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/life">Acme Corp</a>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.company_name).toBe('Acme Corp');
+  });
+
+  it('resolves the company link after it appears asynchronously', async () => {
+    setBody('<h1>Senior Software Engineer</h1>');
+
+    const pending = extractJobDraft(LINKEDIN);
+    setTimeout(() => {
+      setBody(
+        document.body.innerHTML +
+          '<a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>',
+      );
+    }, 0);
+
+    const { draft } = await pending;
+    expect(draft.company_name).toBe('Acme Corp');
+  });
+
+  it('falls back to no dom company_name candidate when the link never appears', async () => {
+    setBody('<h1>Senior Software Engineer</h1>');
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    expect(draft.company_name).toBeUndefined();
   });
 });
 
