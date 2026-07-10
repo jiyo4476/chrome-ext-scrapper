@@ -3,6 +3,7 @@ import {
   type ExtensionErrorCode,
   type ExtensionMessage,
   type ExtensionResponse,
+  type ExtractionCandidate,
   extensionMessageSchema,
 } from '../src/lib/messages';
 import {
@@ -111,7 +112,7 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
       type: 'EXTRACT_ACTIVE_TAB_RESULT',
       ok: true,
       draft: parsedDraft.data,
-      candidates: extraction.candidates,
+      candidates: filterInvalidCandidates(extraction.candidates),
     };
   } catch {
     return errorResponse(
@@ -119,6 +120,41 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
       'Chrome could not read the active tab. Try reloading the page and opening the popup again.',
     );
   }
+}
+
+// safeParseDraftWithFallback strips invalid fields out of the returned
+// draft, but the raw candidates object it's paired with comes from the same
+// unvalidated page-script output -- without this, the field-review picker
+// could still offer a value that was just rejected from the draft as a
+// selectable option. Drop any candidate whose value doesn't pass its
+// field's own schema, so the picker never re-surfaces something already
+// known to be invalid.
+function filterInvalidCandidates(
+  candidates: unknown,
+): Record<string, ExtractionCandidate[]> {
+  if (!candidates || typeof candidates !== 'object') return {};
+
+  const shape = jobDraftSchema.shape as Record<
+    string,
+    { safeParse: (value: unknown) => { success: boolean } }
+  >;
+  const filtered: Record<string, ExtractionCandidate[]> = {};
+
+  for (const [field, list] of Object.entries(
+    candidates as Record<string, unknown>,
+  )) {
+    const fieldSchema = shape[field];
+    if (!fieldSchema || !Array.isArray(list)) continue;
+
+    const validList = (list as ExtractionCandidate[]).filter(
+      (candidate) => fieldSchema.safeParse(candidate.value).success,
+    );
+    if (validList.length > 0) {
+      filtered[field] = validList;
+    }
+  }
+
+  return filtered;
 }
 
 function safeParseDraftWithFallback(raw: unknown) {

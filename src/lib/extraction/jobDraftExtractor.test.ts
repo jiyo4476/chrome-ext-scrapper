@@ -123,6 +123,33 @@ describe('extractJobDraft — JSON-LD source', () => {
     expect(draft.company_name).toBe('Rich Co');
   });
 
+  it('prefers the JobPosting whose own url matches the current page over a richer but unrelated block', async () => {
+    setLocation('https://example.com/jobs/thin-posting');
+    setHead(`
+      <script type="application/ld+json">
+        {
+          "@type": "JobPosting",
+          "title": "Thin Posting",
+          "url": "https://example.com/jobs/thin-posting"
+        }
+      </script>
+      <script type="application/ld+json">
+        {
+          "@type": "JobPosting",
+          "title": "Unrelated Recommended Job",
+          "hiringOrganization": { "@type": "Organization", "name": "Other Co" },
+          "description": "A completely different job from a related-jobs widget.",
+          "datePosted": "2026-07-01",
+          "url": "https://example.com/jobs/unrelated"
+        }
+      </script>
+    `);
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_title).toBe('Thin Posting');
+  });
+
   it('resolves a relative JSON-LD url against the page location', async () => {
     setLocation('https://example.com/jobs/data-engineer');
     setHead(`
@@ -271,9 +298,6 @@ describe('extractJobDraft — OpenGraph fallback', () => {
     'indeed',
     'glassdoor',
     'dice',
-    'lever',
-    'greenhouse',
-    'workday',
     'angellist',
     'google',
   ] as const)(
@@ -292,6 +316,17 @@ describe('extractJobDraft — OpenGraph fallback', () => {
       const { draft } = await pending;
 
       expect(draft.company_name).not.toBe('Should Not Be Used');
+    },
+  );
+
+  it.each(['lever', 'greenhouse', 'workday'] as const)(
+    "uses og:site_name as company_name for platform %s (white-labeled ATS embeds carry the employer's own brand there)",
+    async (platform) => {
+      setHead('<meta property="og:site_name" content="Acme Corp" />');
+
+      const { draft } = await extractJobDraft({ platform, confidence: 'high' });
+
+      expect(draft.company_name).toBe('Acme Corp');
     },
   );
 
@@ -357,6 +392,46 @@ describe('extractJobDraft — candidate review mode', () => {
         }),
       ]),
     );
+  });
+});
+
+describe('extractJobDraft — source_platform', () => {
+  it('sets source_platform and its confidence directly from the detection argument', async () => {
+    const { draft } = await extractJobDraft({
+      platform: 'dice',
+      confidence: 'low',
+    });
+
+    expect(draft.source_platform).toBe('dice');
+    expect(draft.extraction_confidence?.source_platform).toBe('low');
+  });
+});
+
+describe('extractJobDraft — merge priority', () => {
+  it('prefers a dom-sourced value over an equal-confidence jsonld value (stale JSON-LD from a prior SPA view should not win)', async () => {
+    setHead(`
+      <script type="application/ld+json">
+        { "@type": "JobPosting", "title": "Stale JSON-LD Title" }
+      </script>
+    `);
+    setBody(`
+      <h1 class="jobsearch-JobInfoHeader-title">Fresh DOM Title</h1>
+      <div id="jobDescriptionText">Fresh description.</div>
+    `);
+
+    const { draft, candidates } = await extractJobDraft({
+      platform: 'indeed',
+      confidence: 'high',
+    });
+
+    expect(draft.job_title).toBe('Fresh DOM Title');
+    // The h1 is also picked up by the generic visible-text fallback (same
+    // value as the dom candidate), alongside the stale jsonld value.
+    expect(candidates.job_title?.map((c) => c.source).sort()).toEqual([
+      'dom',
+      'jsonld',
+      'visible-text',
+    ]);
   });
 });
 
@@ -478,6 +553,23 @@ describe('extractJobDraft — Google Jobs DOM extraction', () => {
 
     expect(draft.job_title).toBe('Product Engineer');
     expect(draft.company_name).toBe('Northstar Apps');
+    expect(draft.job_description).toBe('Build delightful product experiences.');
+  });
+
+  it('prefers the scoped dom description over a generic page-level meta description', async () => {
+    setHead(
+      '<meta name="description" content="Search results for Software Engineer jobs" />',
+    );
+    setBody(`
+      <div>
+        <div role="heading" aria-level="2">Product Engineer</div>
+        <div>Northstar Apps</div>
+        <section>Build delightful product experiences.</section>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(GOOGLE);
+
     expect(draft.job_description).toBe('Build delightful product experiences.');
   });
 

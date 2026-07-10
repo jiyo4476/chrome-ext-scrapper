@@ -110,23 +110,41 @@ export async function extractJobDraft(detection: {
     return text || undefined;
   }
 
-  function waitForAny(
-    selectors: string[],
+  // Waits on several independent selector groups at once via a single
+  // shared MutationObserver, instead of one observer per group -- avoids
+  // doubling observer-callback overhead when a platform extractor needs to
+  // wait on e.g. title and description together.
+  function waitForEach(
+    selectorGroups: string[][],
     timeoutMs: number,
-  ): Promise<Element | undefined> {
+  ): Promise<(Element | undefined)[]> {
     return new Promise((resolve) => {
-      const immediate = queryFirst(selectors);
-      if (immediate) {
-        resolve(immediate);
+      const results: (Element | undefined)[] = selectorGroups.map(
+        () => undefined,
+      );
+      const pending = new Set(selectorGroups.map((_, i) => i));
+
+      function checkPending(): boolean {
+        for (const i of Array.from(pending)) {
+          const el = queryFirst(selectorGroups[i] ?? []);
+          if (el) {
+            results[i] = el;
+            pending.delete(i);
+          }
+        }
+        return pending.size === 0;
+      }
+
+      if (checkPending()) {
+        resolve(results);
         return;
       }
 
       const observer = new MutationObserver(() => {
-        const el = queryFirst(selectors);
-        if (el) {
+        if (checkPending()) {
           observer.disconnect();
           clearTimeout(timer);
-          resolve(el);
+          resolve(results);
         }
       });
       observer.observe(document.documentElement, {
@@ -136,7 +154,7 @@ export async function extractJobDraft(detection: {
 
       const timer = setTimeout(() => {
         observer.disconnect();
-        resolve(undefined);
+        resolve(results);
       }, timeoutMs);
     });
   }
@@ -337,6 +355,17 @@ export async function extractJobDraft(detection: {
     postings: Record<string, unknown>[],
   ): Record<string, unknown> | undefined {
     if (postings.length === 0) return undefined;
+
+    // A posting whose own `url` points at this exact page is almost
+    // certainly the one actually being viewed -- prefer it outright over a
+    // richer but unrelated block (e.g. a "similar jobs" widget's JobPosting)
+    // that just happens to have more fields populated.
+    const currentUrlMatch = postings.find((posting) => {
+      const url = posting.url;
+      return typeof url === 'string' && resolveUrl(url) === location.href;
+    });
+    if (currentUrlMatch) return currentUrlMatch;
+
     return postings.reduce((best, current) =>
       richnessScore(current) > richnessScore(best) ? current : best,
     );
@@ -370,20 +399,17 @@ export async function extractJobDraft(detection: {
     // before #jobDescriptionText, which Indeed often populates via a
     // follow-up XHR. Waiting on title alone would return as soon as it
     // resolves and silently miss a still-loading description.
-    const [titleEl, descriptionEl] = await Promise.all([
-      waitForAny(
+    const [titleEl, descriptionEl] = await waitForEach(
+      [
         [
           'h1.jobsearch-JobInfoHeader-title',
           '[data-testid="jobsearch-JobInfoHeader-title"]',
           'h1',
         ],
-        800,
-      ),
-      waitForAny(
         ['#jobDescriptionText', '[data-testid="jobDescriptionText"]'],
-        800,
-      ),
-    ]);
+      ],
+      800,
+    );
     addCandidate('job_title', textOf(titleEl), 'dom', 'high');
     addCandidate('job_description', textOf(descriptionEl), 'dom', 'high');
 
@@ -414,10 +440,13 @@ export async function extractJobDraft(detection: {
   }
 
   async function extractGlassdoorDom(): Promise<void> {
-    const [titleEl, descriptionEl] = await Promise.all([
-      waitForAny(['[data-test="job-title"]', 'h1'], 800),
-      waitForAny(['[data-test="jobDescriptionContent"]', 'article'], 800),
-    ]);
+    const [titleEl, descriptionEl] = await waitForEach(
+      [
+        ['[data-test="job-title"]', 'h1'],
+        ['[data-test="jobDescriptionContent"]', 'article'],
+      ],
+      800,
+    );
     addCandidate('job_title', textOf(titleEl), 'dom', 'high');
     addCandidate('job_description', textOf(descriptionEl), 'dom', 'high');
 
@@ -444,12 +473,14 @@ export async function extractJobDraft(detection: {
     return Array.from(document.querySelectorAll(GOOGLE_JOB_HEADING_SELECTOR));
   }
 
-  function findExplicitlySelectedGoogleJobHeading(): Element | undefined {
+  function findExplicitlySelectedGoogleJobHeading(
+    headings: Element[],
+  ): Element | undefined {
     // On a search-results page, multiple job cards can each render a
     // heading matching this selector -- prefer the one inside a panel
     // explicitly marked as the currently selected/expanded job over just
     // taking the first card in the list.
-    return queryGoogleJobHeadings().find((el) =>
+    return headings.find((el) =>
       el.closest('[aria-selected="true"], [aria-expanded="true"]'),
     );
   }
@@ -463,7 +494,7 @@ export async function extractJobDraft(detection: {
     // immediately rather than waiting out the full timeout on every
     // single-result page.
     return (
-      findExplicitlySelectedGoogleJobHeading() ??
+      findExplicitlySelectedGoogleJobHeading(headings) ??
       (headings.length === 1 ? headings[0] : undefined)
     );
   }
@@ -548,11 +579,16 @@ export async function extractJobDraft(detection: {
 
     const container = pickGoogleJobDescriptionContainer(titleEl);
     if (container) {
+      // 'medium', not 'low': once a bounded, explicitly-scoped container is
+      // found (see pickGoogleJobDescriptionContainer's own scoping guard),
+      // this is the selected job's actual description, not a fabricated
+      // guess -- it should out-rank a generic page-level meta description
+      // in the merge step, not lose to it.
       addCandidate(
         'job_description',
         textOf(container.querySelector('section, [role="article"]')),
         'dom',
-        'low',
+        'medium',
       );
     }
   }
@@ -650,22 +686,22 @@ export async function extractJobDraft(detection: {
       ?.content?.trim() || metaContent('og:description');
   addCandidate('job_description', metaDescription, 'meta', 'medium');
 
-  const JOB_BOARD_PLATFORMS = new Set<ApiSourcePlatform>([
+  // og:site_name is the *hosting site's own* brand (e.g. "Indeed",
+  // "Glassdoor") on aggregator job boards, not the employer -- only trust it
+  // as a company name candidate off this set. Greenhouse/Lever/Workday are
+  // deliberately excluded: those are white-labeled ATS embeds hosted under
+  // the *employer's own* branding (e.g. boards.greenhouse.io/acmecorp), so
+  // og:site_name there is plausibly the employer's own name, same as an
+  // unrecognized careers page.
+  const SITE_BRANDED_PLATFORMS = new Set<ApiSourcePlatform>([
     'linkedin',
     'indeed',
     'glassdoor',
     'dice',
-    'lever',
-    'greenhouse',
-    'workday',
     'angellist',
     'google',
   ]);
-  if (!JOB_BOARD_PLATFORMS.has(detection.platform)) {
-    // og:site_name is the *hosting site's* brand (e.g. "Indeed", "Glassdoor")
-    // on known job boards, not the employer -- only trust it as a company
-    // name candidate on unrecognized sites, where it's plausibly the
-    // employer's own careers page.
+  if (!SITE_BRANDED_PLATFORMS.has(detection.platform)) {
     addCandidate('company_name', metaContent('og:site_name'), 'meta', 'medium');
   }
 
@@ -697,13 +733,17 @@ export async function extractJobDraft(detection: {
   );
 
   // --- platform-specific dom source -----------------------------------------
-  if (detection.platform === 'indeed') {
-    await extractIndeedDom();
-  } else if (detection.platform === 'glassdoor') {
-    await extractGlassdoorDom();
-  } else if (detection.platform === 'google') {
-    await extractGoogleJobsDom();
-  }
+  // A single dispatch table instead of a hand-written if/else chain -- adding
+  // a new platform's DOM extractor is then a one-line addition here, in one
+  // place, instead of a new branch easy to forget.
+  const platformDomExtractors: Partial<
+    Record<ApiSourcePlatform, () => Promise<void>>
+  > = {
+    indeed: extractIndeedDom,
+    glassdoor: extractGlassdoorDom,
+    google: extractGoogleJobsDom,
+  };
+  await platformDomExtractors[detection.platform]?.();
 
   // --- visible-text source -------------------------------------------------
   const h1Text = document
@@ -723,9 +763,16 @@ export async function extractJobDraft(detection: {
   addCandidate('job_description', bodyText, 'visible-text', 'low');
 
   // --- merge candidates into a single best-guess draft ---------------------
+  // 'dom' ranks above 'jsonld' as a tiebreak: a platform DOM extractor only
+  // runs for the platform actually detected on this page, scraping whatever
+  // is on screen right now, whereas a JSON-LD block can be stale left-over
+  // markup from a previous SPA-rendered view (e.g. a split-view results list
+  // where clicking a different job updates the visible panel but not a
+  // server-rendered <head> script tag) that just happens to still be present
+  // in the DOM.
   const priority: Record<Source, number> = {
-    jsonld: 0,
-    dom: 1,
+    dom: 0,
+    jsonld: 1,
     meta: 2,
     url: 3,
     'visible-text': 4,

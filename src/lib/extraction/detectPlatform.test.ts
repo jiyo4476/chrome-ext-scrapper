@@ -32,11 +32,25 @@ describe('detectPlatform', () => {
     expect(result.platform).not.toBe('google');
   });
 
-  it('detects google.co.uk as google, matching Google Jobs across country TLDs', () => {
-    expect(
-      detectPlatform('https://www.google.co.uk/search?q=engineer&ibp=htl;jobs'),
-    ).toEqual({ platform: 'google', confidence: 'high' });
-  });
+  it.each([
+    'google.co.uk',
+    'google.pl',
+    'google.ru',
+    'google.se',
+    'google.co.kr',
+    'google.com.sg',
+    'google.co.id',
+    'google.com.tw',
+    'google.co.za',
+    'google.com.tr',
+  ])(
+    'detects %s as google, matching Google Jobs across country TLDs',
+    (host) => {
+      expect(
+        detectPlatform(`https://www.${host}/search?q=engineer&ibp=htl;jobs`),
+      ).toEqual({ platform: 'google', confidence: 'high' });
+    },
+  );
 
   it.each([
     ['https://www.indeed.com.evil-phishing.example/viewjob?jk=1', 'indeed'],

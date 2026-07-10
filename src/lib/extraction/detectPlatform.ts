@@ -17,8 +17,10 @@ function hostMatches(host: string, domain: string): boolean {
 // "com.evil.example" is itself all [a-z.] characters) -- there is no way to
 // validate a "real" multi-label TLD without a public-suffix list, so match
 // against a bounded, explicit allowlist via the same exact-or-suffix rule
-// used above instead. TLDs not listed here safely fall through to the
-// 'direct'/'other' branches rather than being misdetected.
+// used above instead. This list covers Google's major-market ccTLDs; it is
+// not exhaustive (Google operates ~190 country domains) but TLDs not listed
+// here safely fall through to the 'direct'/'other' branches -- degraded
+// detection quality, not a spoofing risk -- rather than being misdetected.
 const GOOGLE_SEARCH_HOSTS = [
   'google.com',
   'google.co.uk',
@@ -35,6 +37,50 @@ const GOOGLE_SEARCH_HOSTS = [
   'google.nl',
   'google.co.nz',
   'google.ie',
+  'google.pl',
+  'google.ru',
+  'google.se',
+  'google.no',
+  'google.dk',
+  'google.fi',
+  'google.at',
+  'google.ch',
+  'google.be',
+  'google.pt',
+  'google.gr',
+  'google.co.kr',
+  'google.com.sg',
+  'google.com.hk',
+  'google.co.th',
+  'google.co.id',
+  'google.com.tw',
+  'google.co.za',
+  'google.com.ar',
+  'google.cl',
+  'google.com.co',
+  'google.com.pe',
+  'google.com.ph',
+  'google.com.my',
+  'google.com.eg',
+  'google.com.sa',
+  'google.ae',
+  'google.com.pk',
+  'google.com.vn',
+  'google.cz',
+  'google.sk',
+  'google.hu',
+  'google.ro',
+  'google.bg',
+  'google.hr',
+  'google.si',
+  'google.lt',
+  'google.lv',
+  'google.ee',
+  'google.is',
+  'google.com.ua',
+  'google.by',
+  'google.co.il',
+  'google.com.tr',
 ];
 
 function isGoogleHost(host: string): boolean {
