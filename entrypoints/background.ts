@@ -24,7 +24,7 @@ export default defineBackground(() => {
   });
 });
 
-async function handleMessage(
+export async function handleMessage(
   message: ExtensionMessage,
 ): Promise<ExtensionResponse> {
   if (message.type === 'EXTRACT_ACTIVE_TAB') {
