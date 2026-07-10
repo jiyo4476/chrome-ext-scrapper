@@ -30,6 +30,7 @@ header,
 footer {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   justify-content: space-between;
 }
@@ -122,4 +123,50 @@ details[open] summary {
   border-left: 3px solid color-mix(in srgb, Highlight 65%, Canvas);
   min-height: 20px;
   padding-left: 10px;
+}
+
+#status[role='alert'] {
+  border-left-color: color-mix(in srgb, Mark 70%, Canvas);
+}
+
+#status-action {
+  display: inline-block;
+  font-weight: 600;
+}
+
+#status-action[hidden] {
+  display: none;
+}
+
+.field-error {
+  color: color-mix(in srgb, Mark 75%, CanvasText);
+  font-size: 12px;
+  margin-top: -6px;
+}
+
+.field-error[hidden] {
+  display: none;
+}
+
+.candidate-picker {
+  display: grid;
+  gap: 4px;
+  margin-top: -6px;
+  padding-left: 2px;
+}
+
+.candidate-picker[hidden] {
+  display: none;
+}
+
+.candidate-option {
+  align-items: baseline;
+  display: flex;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.candidate-option input[type='radio'] {
+  flex: 0 0 auto;
+  margin: 0;
 }

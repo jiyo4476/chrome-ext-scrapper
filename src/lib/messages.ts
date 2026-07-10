@@ -54,10 +54,22 @@ export const testConnectionRequestSchema = z.object({
   type: z.literal('TEST_CONNECTION'),
 });
 
+export const extractionCandidateSchema = z.object({
+  value: z.unknown(),
+  source: z.enum(['jsonld', 'meta', 'visible-text', 'url']),
+  confidence: z.enum(['high', 'medium', 'low']),
+});
+
+export const extractionCandidatesSchema = z.record(
+  z.string(),
+  z.array(extractionCandidateSchema),
+);
+
 export const extractActiveTabResponseSchema = z.object({
   type: z.literal('EXTRACT_ACTIVE_TAB_RESULT'),
   ok: z.literal(true),
   draft: jobDraftSchema,
+  candidates: extractionCandidatesSchema.optional(),
 });
 
 export const saveJobResultSchema = z
@@ -122,3 +134,5 @@ export type ExtensionErrorCode = z.infer<typeof extensionErrorCodeSchema>;
 export type ExtensionMessage = z.infer<typeof extensionMessageSchema>;
 export type ExtensionResponse = z.infer<typeof extensionResponseSchema>;
 export type SaveJobResult = z.infer<typeof saveJobResultSchema>;
+export type ExtractionCandidate = z.infer<typeof extractionCandidateSchema>;
+export type ExtractionCandidates = z.infer<typeof extractionCandidatesSchema>;

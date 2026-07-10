@@ -29,6 +29,7 @@
     "@types/chrome": "^0.0.326",
     "eslint": "^10.6.0",
     "globals": "^17.7.0",
+    "jsdom": "^29.1.1",
     "prettier": "^3.9.4",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.63.0",
