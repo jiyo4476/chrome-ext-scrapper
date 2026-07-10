@@ -17,6 +17,42 @@ describe('extension message contracts', () => {
     ).toMatchObject({ type: 'SAVE_JOB' });
   });
 
+  it('accepts test connection requests and responses', () => {
+    expect(extensionMessageSchema.parse({ type: 'TEST_CONNECTION' })).toEqual({
+      type: 'TEST_CONNECTION',
+    });
+    expect(
+      extensionResponseSchema.parse({
+        type: 'TEST_CONNECTION_RESULT',
+        ok: true,
+      }),
+    ).toEqual({ type: 'TEST_CONNECTION_RESULT', ok: true });
+  });
+
+  it('does not default omitted OAuth tokens in settings updates', () => {
+    expect(
+      extensionMessageSchema.parse({
+        type: 'SAVE_SETTINGS',
+        settings: {
+          apiBaseUrl: 'http://localhost:3000',
+          authentikBaseUrl: 'https://auth.yjimmy.dev',
+          oauthClientId: 'job-tracker-extension',
+          oauthScope: 'openid profile email',
+          autoDetect: false,
+        },
+      }),
+    ).toEqual({
+      type: 'SAVE_SETTINGS',
+      settings: {
+        apiBaseUrl: 'http://localhost:3000',
+        authentikBaseUrl: 'https://auth.yjimmy.dev',
+        oauthClientId: 'job-tracker-extension',
+        oauthScope: 'openid profile email',
+        autoDetect: false,
+      },
+    });
+  });
+
   it('rejects unexpected message types at runtime boundaries', () => {
     expect(() =>
       extensionMessageSchema.parse({ type: 'DELETE_EVERYTHING' }),

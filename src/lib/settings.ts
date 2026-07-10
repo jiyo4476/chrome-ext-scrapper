@@ -18,7 +18,12 @@ export const extensionSettingsSchema = z.object({
   autoDetect: z.boolean().default(false),
 });
 
+export const extensionSettingsUpdateSchema = extensionSettingsSchema.partial();
+
 export type ExtensionSettings = z.infer<typeof extensionSettingsSchema>;
+export type ExtensionSettingsUpdate = z.infer<
+  typeof extensionSettingsUpdateSchema
+>;
 
 const STORAGE_KEY = 'jobTracker.settings';
 
@@ -28,7 +33,7 @@ export async function getSettings(): Promise<ExtensionSettings> {
 }
 
 export async function saveSettings(
-  settings: ExtensionSettings,
+  settings: ExtensionSettingsUpdate,
 ): Promise<ExtensionSettings> {
   const current = await getSettings();
   const parsed = extensionSettingsSchema.parse({ ...current, ...settings });

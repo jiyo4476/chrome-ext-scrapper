@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { extensionSettingsSchema } from './settings';
+import {
+  extensionSettingsSchema,
+  extensionSettingsUpdateSchema,
+} from './settings';
 import { jobDraftSchema, scrapePayloadSchema } from './schemas';
 
 export const extensionErrorCodeSchema = z.enum([
@@ -16,6 +19,7 @@ export const extensionErrorCodeSchema = z.enum([
   'API_NETWORK_FAILED',
   'API_UNEXPECTED_RESPONSE',
   'OAUTH_FAILED',
+  'SAVE_IN_PROGRESS',
 ]);
 
 export const extensionErrorSchema = z.object({
@@ -39,11 +43,15 @@ export const getSettingsRequestSchema = z.object({
 
 export const saveSettingsRequestSchema = z.object({
   type: z.literal('SAVE_SETTINGS'),
-  settings: extensionSettingsSchema,
+  settings: extensionSettingsUpdateSchema,
 });
 
 export const oauthSignInRequestSchema = z.object({
   type: z.literal('OAUTH_SIGN_IN'),
+});
+
+export const testConnectionRequestSchema = z.object({
+  type: z.literal('TEST_CONNECTION'),
 });
 
 export const extractActiveTabResponseSchema = z.object({
@@ -81,6 +89,11 @@ export const saveSettingsResponseSchema = z.object({
   settings: extensionSettingsSchema,
 });
 
+export const testConnectionResponseSchema = z.object({
+  type: z.literal('TEST_CONNECTION_RESULT'),
+  ok: z.literal(true),
+});
+
 export const extensionErrorResponseSchema = z.object({
   type: z.literal('ERROR'),
   ok: z.literal(false),
@@ -93,6 +106,7 @@ export const extensionMessageSchema = z.discriminatedUnion('type', [
   getSettingsRequestSchema,
   saveSettingsRequestSchema,
   oauthSignInRequestSchema,
+  testConnectionRequestSchema,
 ]);
 
 export const extensionResponseSchema = z.union([
@@ -100,6 +114,7 @@ export const extensionResponseSchema = z.union([
   saveJobResponseSchema,
   getSettingsResponseSchema,
   saveSettingsResponseSchema,
+  testConnectionResponseSchema,
   extensionErrorResponseSchema,
 ]);
 

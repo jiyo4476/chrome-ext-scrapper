@@ -5,11 +5,17 @@ import {
   type ExtensionResponse,
   extensionMessageSchema,
 } from '../src/lib/messages';
-import { ApiClientError, postScrapePayload } from '../src/lib/apiClient';
+import {
+  ApiClientError,
+  postScrapePayload,
+  testAuthConnection,
+} from '../src/lib/apiClient';
 import { getValidAccessToken, signInWithAuthentik } from '../src/lib/oauth';
 import { buildScrapePayload } from '../src/lib/payload';
 import { type JobDraft, jobDraftSchema } from '../src/lib/schemas';
 import { getSettings, saveSettings } from '../src/lib/settings';
+
+let saveJobInFlight = false;
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((message: unknown) => {
@@ -56,6 +62,10 @@ export async function handleMessage(
         error instanceof Error ? error.message : undefined,
       );
     }
+  }
+
+  if (message.type === 'TEST_CONNECTION') {
+    return testConnection();
   }
 
   return errorResponse(
@@ -106,6 +116,11 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
 }
 
 async function saveJob(draft: JobDraft): Promise<ExtensionResponse> {
+  if (saveJobInFlight) {
+    return errorResponse('SAVE_IN_PROGRESS', 'A save is already in progress.');
+  }
+
+  saveJobInFlight = true;
   try {
     const payload = buildScrapePayload(draft);
     const settings = await getSettings();
@@ -131,6 +146,31 @@ async function saveJob(draft: JobDraft): Promise<ExtensionResponse> {
     return errorResponse(
       'PAYLOAD_INVALID',
       'Review the required fields before saving this job.',
+      error instanceof Error ? error.message : undefined,
+    );
+  } finally {
+    saveJobInFlight = false;
+  }
+}
+
+async function testConnection(): Promise<ExtensionResponse> {
+  try {
+    const settings = await getSettings();
+    const accessToken = await getValidAccessToken(settings);
+    await testAuthConnection({ ...settings, oauthAccessToken: accessToken });
+    return { type: 'TEST_CONNECTION_RESULT', ok: true };
+  } catch (error) {
+    if (error instanceof ApiClientError) {
+      return errorResponse(error.code, error.message, error.details);
+    }
+
+    if (error instanceof Error && error.message.includes('Sign in')) {
+      return errorResponse('OAUTH_FAILED', error.message);
+    }
+
+    return errorResponse(
+      'API_UNEXPECTED_RESPONSE',
+      'Could not verify the Job Tracker API connection.',
       error instanceof Error ? error.message : undefined,
     );
   }

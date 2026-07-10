@@ -63,4 +63,32 @@ describe('background save flow', () => {
     });
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it('checks the authenticated API health endpoint', async () => {
+    browserMock.storage.local.get.mockResolvedValue({
+      'jobTracker.settings': {
+        apiBaseUrl: 'http://localhost:3000',
+        authentikBaseUrl: 'https://auth.yjimmy.dev',
+        oauthClientId: 'job-tracker-extension',
+        oauthScope: 'openid profile email',
+        oauthAccessToken: 'oauth-token',
+        oauthRefreshToken: '',
+        oauthExpiresAt: Date.now() + 300_000,
+        apiKey: '',
+        autoDetect: false,
+      },
+    });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    const response = await handleMessage({ type: 'TEST_CONNECTION' });
+
+    expect(response).toEqual({ type: 'TEST_CONNECTION_RESULT', ok: true });
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/health/auth',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
 });

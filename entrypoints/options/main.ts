@@ -15,6 +15,8 @@ const form = document.querySelector<HTMLFormElement>('#settings-form');
 const statusEl = document.querySelector<HTMLDivElement>('#status');
 const signInButton =
   document.querySelector<HTMLButtonElement>('#oauth-sign-in');
+const testConnectionButton =
+  document.querySelector<HTMLButtonElement>('#test-connection');
 
 void loadSettings();
 
@@ -25,6 +27,10 @@ form?.addEventListener('submit', (event) => {
 
 signInButton?.addEventListener('click', () => {
   void signInWithAuthentik();
+});
+
+testConnectionButton?.addEventListener('click', () => {
+  void testConnection();
 });
 
 async function loadSettings(): Promise<void> {
@@ -54,7 +60,9 @@ async function loadSettings(): Promise<void> {
   if (settings.oauthAccessToken) setStatus('Signed in with Authentik.');
 }
 
-async function persistSettings(): Promise<ExtensionSettings | null> {
+async function persistSettings(
+  savedMessage?: string,
+): Promise<ExtensionSettings | null> {
   const apiBaseUrl = getInputValue('#api-base-url') || DEFAULT_API_BASE_URL;
   const authentikBaseUrl =
     getInputValue('#authentik-base-url') || DEFAULT_AUTHENTIK_BASE_URL;
@@ -87,7 +95,9 @@ async function persistSettings(): Promise<ExtensionSettings | null> {
     return null;
   }
 
-  setStatus(`Saved settings for ${response.settings.apiBaseUrl}.`);
+  setStatus(
+    savedMessage ?? `Saved settings for ${response.settings.apiBaseUrl}.`,
+  );
   return response.settings;
 }
 
@@ -110,6 +120,39 @@ async function signInWithAuthentik(): Promise<void> {
     );
   } finally {
     setSignInDisabled(false);
+  }
+}
+
+async function testConnection(): Promise<void> {
+  setStatus('Testing Job Tracker connection...');
+  setControlsDisabled(true);
+
+  try {
+    const settings = await persistSettings('Settings saved. Testing now...');
+    if (!settings) return;
+
+    const rawResponse: unknown = await browser.runtime.sendMessage({
+      type: 'TEST_CONNECTION',
+    });
+    const response = extensionResponseSchema.parse(rawResponse);
+    if (!response.ok || response.type !== 'TEST_CONNECTION_RESULT') {
+      setStatus(
+        !response.ok
+          ? response.error.message
+          : 'Could not verify the connection.',
+      );
+      return;
+    }
+
+    setStatus('Connected to Job Tracker with Authentik.');
+  } catch (error) {
+    setStatus(
+      error instanceof Error
+        ? error.message
+        : 'Could not verify the connection.',
+    );
+  } finally {
+    setControlsDisabled(false);
   }
 }
 
@@ -147,4 +190,9 @@ function setStatus(message: string): void {
 
 function setSignInDisabled(disabled: boolean): void {
   if (signInButton) signInButton.disabled = disabled;
+}
+
+function setControlsDisabled(disabled: boolean): void {
+  setSignInDisabled(disabled);
+  if (testConnectionButton) testConnectionButton.disabled = disabled;
 }
