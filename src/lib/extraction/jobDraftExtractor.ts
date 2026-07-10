@@ -1,31 +1,39 @@
-import type { JobDraft } from '../schemas';
+import type { ApiSourcePlatform, JobDraft } from '../schemas';
 
 /**
  * Extracts a best-guess {@link JobDraft} from the active page using JSON-LD
- * `JobPosting` markup, OpenGraph/meta tags, the page URL, and finally
- * visible text as a last-resort fallback.
+ * `JobPosting` markup, OpenGraph/meta tags, platform-specific DOM selectors,
+ * the page URL, and finally visible text as a last-resort fallback.
  *
  * IMPORTANT: this function is passed directly to
- * `browser.scripting.executeScript({ func: extractGenericJobDraft })`, which
- * stringifies the function body and injects it into the page. It must not
- * reference any binding from outside its own body/params other than page
+ * `browser.scripting.executeScript({ func: extractJobDraft, args: [detection] })`,
+ * which stringifies the function body and injects it into the page. It must
+ * not reference any binding from outside its own body/params other than page
  * globals (`document`, `window`, `location`). Only type-only imports are
  * allowed at the module level because those are erased at compile time.
+ *
+ * The platform is pre-detected in the background worker (which has `tab.url`
+ * available without injection) and passed in as `detection` — this function
+ * trusts it entirely rather than re-detecting from `location`, since
+ * background already saw the same URL.
  */
-export function extractGenericJobDraft(): {
+export async function extractJobDraft(detection: {
+  platform: ApiSourcePlatform;
+  confidence: 'high' | 'low';
+}): Promise<{
   draft: JobDraft;
   candidates: Partial<
     Record<
       keyof JobDraft,
       {
         value: unknown;
-        source: 'jsonld' | 'meta' | 'visible-text' | 'url';
+        source: 'jsonld' | 'dom' | 'meta' | 'visible-text' | 'url';
         confidence: 'high' | 'medium' | 'low';
       }[]
     >
   >;
-} {
-  type Source = 'jsonld' | 'meta' | 'visible-text' | 'url';
+}> {
+  type Source = 'jsonld' | 'dom' | 'meta' | 'visible-text' | 'url';
   type Confidence = 'high' | 'medium' | 'low';
 
   interface Candidate {
@@ -76,6 +84,61 @@ export function extractGenericJobDraft(): {
       return parsed.toISOString().slice(0, 10);
     }
     return undefined;
+  }
+
+  function resolveUrl(raw: string): string | undefined {
+    try {
+      return new URL(raw, location.href).toString();
+    } catch {
+      return undefined;
+    }
+  }
+
+  function queryFirst(
+    selectors: string[],
+    root: ParentNode = document,
+  ): Element | null {
+    for (const selector of selectors) {
+      const el = root.querySelector(selector);
+      if (el) return el;
+    }
+    return null;
+  }
+
+  function textOf(el: Element | null | undefined): string | undefined {
+    const text = el?.textContent?.replace(/\s+/g, ' ').trim();
+    return text || undefined;
+  }
+
+  function waitForAny(
+    selectors: string[],
+    timeoutMs: number,
+  ): Promise<Element | undefined> {
+    return new Promise((resolve) => {
+      const immediate = queryFirst(selectors);
+      if (immediate) {
+        resolve(immediate);
+        return;
+      }
+
+      const observer = new MutationObserver(() => {
+        const el = queryFirst(selectors);
+        if (el) {
+          observer.disconnect();
+          clearTimeout(timer);
+          resolve(el);
+        }
+      });
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+
+      const timer = setTimeout(() => {
+        observer.disconnect();
+        resolve(undefined);
+      }, timeoutMs);
+    });
   }
 
   function mapEmploymentType(raw: unknown): JobDraft['job_type'] | undefined {
@@ -259,32 +322,32 @@ export function extractGenericJobDraft(): {
     return postings;
   }
 
+  function richnessScore(posting: Record<string, unknown>): number {
+    return [
+      'title',
+      'hiringOrganization',
+      'description',
+      'datePosted',
+      'jobLocation',
+      'baseSalary',
+    ].reduce((score, key) => score + (posting[key] ? 1 : 0), 0);
+  }
+
+  function pickRichestJobPosting(
+    postings: Record<string, unknown>[],
+  ): Record<string, unknown> | undefined {
+    if (postings.length === 0) return undefined;
+    return postings.reduce((best, current) =>
+      richnessScore(current) > richnessScore(best) ? current : best,
+    );
+  }
+
   function metaContent(name: string): string | undefined {
     const selector = `meta[name="${name}"], meta[property="${name}"]`;
     const value = document
       .querySelector<HTMLMetaElement>(selector)
       ?.content?.trim();
     return value || undefined;
-  }
-
-  function detectPlatform(host: string, url: string): string {
-    if (host.includes('linkedin.com')) return 'linkedin';
-    if (host.includes('indeed.com')) return 'indeed';
-    if (host.includes('glassdoor.com')) return 'glassdoor';
-    if (host.includes('dice.com')) return 'dice';
-    if (host.includes('greenhouse.io')) return 'greenhouse';
-    if (host.includes('lever.co')) return 'lever';
-    if (host.includes('myworkdayjobs.com')) return 'workday';
-    if (host.includes('wellfound.com') || host.includes('angel.co'))
-      return 'angellist';
-    if (host.includes('google.') && url.includes('ibp=htl')) return 'google';
-    if (
-      url.toLowerCase().includes('career') ||
-      url.toLowerCase().includes('job')
-    ) {
-      return 'direct';
-    }
-    return 'other';
   }
 
   function inferExternalId(url: string, title?: string): string {
@@ -300,8 +363,108 @@ export function extractGenericJobDraft(): {
       .replace(/[^a-z0-9_-]+/g, '-');
   }
 
+  // --- platform-specific DOM extraction -------------------------------------
+
+  async function extractIndeedDom(): Promise<void> {
+    const titleEl = await waitForAny(
+      [
+        'h1.jobsearch-JobInfoHeader-title',
+        '[data-testid="jobsearch-JobInfoHeader-title"]',
+        'h1',
+      ],
+      800,
+    );
+    addCandidate('job_title', textOf(titleEl), 'dom', 'high');
+
+    addCandidate(
+      'company_name',
+      textOf(
+        queryFirst([
+          '[data-testid="inlineHeader-companyName"]',
+          '.jobsearch-InlineCompanyRating-companyHeader a',
+          '.jobsearch-CompanyInfoContainer a',
+        ]),
+      ),
+      'dom',
+      'high',
+    );
+
+    addCandidate(
+      'job_location',
+      textOf(
+        queryFirst([
+          '[data-testid="inlineHeader-companyLocation"]',
+          '.jobsearch-JobInfoHeader-subtitle > div',
+        ]),
+      ),
+      'dom',
+      'medium',
+    );
+
+    addCandidate(
+      'job_description',
+      textOf(
+        queryFirst([
+          '#jobDescriptionText',
+          '[data-testid="jobDescriptionText"]',
+        ]),
+      ),
+      'dom',
+      'high',
+    );
+  }
+
+  async function extractGlassdoorDom(): Promise<void> {
+    const titleEl = await waitForAny(['[data-test="job-title"]', 'h1'], 800);
+    addCandidate('job_title', textOf(titleEl), 'dom', 'high');
+
+    addCandidate(
+      'company_name',
+      textOf(queryFirst(['[data-test="employer-name"]'])),
+      'dom',
+      'high',
+    );
+
+    addCandidate(
+      'job_location',
+      textOf(queryFirst(['[data-test="location"]'])),
+      'dom',
+      'medium',
+    );
+
+    addCandidate(
+      'job_description',
+      textOf(queryFirst(['[data-test="jobDescriptionContent"]', 'article'])),
+      'dom',
+      'high',
+    );
+  }
+
+  async function extractGoogleJobsDom(): Promise<void> {
+    const titleEl = await waitForAny(
+      ['[role="heading"][aria-level="2"]', '[role="heading"][aria-level="3"]'],
+      1800,
+    );
+    addCandidate('job_title', textOf(titleEl), 'dom', 'high');
+    if (!titleEl) return;
+
+    const titleText = textOf(titleEl);
+    const companyText = textOf(titleEl.nextElementSibling);
+    if (companyText && companyText.length <= 80 && companyText !== titleText) {
+      addCandidate('company_name', companyText, 'dom', 'low');
+    }
+
+    const container = titleEl.closest('div')?.parentElement ?? document.body;
+    addCandidate(
+      'job_description',
+      textOf(container.querySelector('section, [role="article"]')),
+      'dom',
+      'low',
+    );
+  }
+
   // --- jsonld source ---------------------------------------------------
-  const jobPosting = collectJsonLdJobPostings()[0];
+  const jobPosting = pickRichestJobPosting(collectJsonLdJobPostings());
   if (jobPosting) {
     const title = jobPosting.title;
     addCandidate(
@@ -379,7 +542,7 @@ export function extractGenericJobDraft(): {
     const url = jobPosting.url;
     addCandidate(
       'job_link',
-      typeof url === 'string' ? url : undefined,
+      typeof url === 'string' ? resolveUrl(url) : undefined,
       'jsonld',
       'high',
     );
@@ -392,15 +555,43 @@ export function extractGenericJobDraft(): {
       .querySelector<HTMLMetaElement>('meta[name="description"]')
       ?.content?.trim() || metaContent('og:description');
   addCandidate('job_description', metaDescription, 'meta', 'medium');
-  addCandidate('company_name', metaContent('og:site_name'), 'meta', 'medium');
-  addCandidate('job_link', metaContent('og:url'), 'meta', 'medium');
+
+  const JOB_BOARD_PLATFORMS = new Set<ApiSourcePlatform>([
+    'linkedin',
+    'indeed',
+    'glassdoor',
+    'dice',
+    'lever',
+    'greenhouse',
+    'workday',
+    'angellist',
+    'google',
+  ]);
+  if (!JOB_BOARD_PLATFORMS.has(detection.platform)) {
+    // og:site_name is the *hosting site's* brand (e.g. "Indeed", "Glassdoor")
+    // on known job boards, not the employer -- only trust it as a company
+    // name candidate on unrecognized sites, where it's plausibly the
+    // employer's own careers page.
+    addCandidate('company_name', metaContent('og:site_name'), 'meta', 'medium');
+  }
+
+  const metaUrl = metaContent('og:url');
+  addCandidate(
+    'job_link',
+    metaUrl ? resolveUrl(metaUrl) : undefined,
+    'meta',
+    'medium',
+  );
 
   // --- url source ----------------------------------------------------------
   const href = location.href;
   addCandidate('job_link', href, 'url', 'medium');
-
-  const host = location.hostname.toLowerCase();
-  addCandidate('source_platform', detectPlatform(host, href), 'url', 'medium');
+  addCandidate(
+    'source_platform',
+    detection.platform,
+    'url',
+    detection.confidence,
+  );
 
   const titleForId =
     document.title || document.querySelector('h1')?.textContent || undefined;
@@ -410,6 +601,15 @@ export function extractGenericJobDraft(): {
     'url',
     'medium',
   );
+
+  // --- platform-specific dom source -----------------------------------------
+  if (detection.platform === 'indeed') {
+    await extractIndeedDom();
+  } else if (detection.platform === 'glassdoor') {
+    await extractGlassdoorDom();
+  } else if (detection.platform === 'google') {
+    await extractGoogleJobsDom();
+  }
 
   // --- visible-text source -------------------------------------------------
   const h1Text = document
@@ -431,9 +631,10 @@ export function extractGenericJobDraft(): {
   // --- merge candidates into a single best-guess draft ---------------------
   const priority: Record<Source, number> = {
     jsonld: 0,
-    meta: 1,
-    url: 2,
-    'visible-text': 3,
+    dom: 1,
+    meta: 2,
+    url: 3,
+    'visible-text': 4,
   };
 
   const draft: Record<string, unknown> = {};
