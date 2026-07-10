@@ -10,7 +10,8 @@ import {
   postScrapePayload,
   testAuthConnection,
 } from '../src/lib/apiClient';
-import { extractGenericJobDraft } from '../src/lib/extraction/genericExtractor';
+import { detectPlatform } from '../src/lib/extraction/detectPlatform';
+import { extractJobDraft } from '../src/lib/extraction/jobDraftExtractor';
 import { getValidAccessToken, signInWithAuthentik } from '../src/lib/oauth';
 import { buildScrapePayload } from '../src/lib/payload';
 import { type JobDraft, jobDraftSchema } from '../src/lib/schemas';
@@ -81,10 +82,13 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
     return errorResponse('TAB_NOT_FOUND', 'No active tab is available.');
   }
 
+  const detection = detectPlatform(tab.url ?? '');
+
   try {
     const [result] = await browser.scripting.executeScript({
       target: { tabId: tab.id },
-      func: extractGenericJobDraft,
+      func: extractJobDraft,
+      args: [detection],
     });
 
     const extraction = result?.result;
@@ -95,7 +99,7 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
       );
     }
 
-    const parsedDraft = jobDraftSchema.safeParse(extraction.draft);
+    const parsedDraft = safeParseDraftWithFallback(extraction.draft);
     if (!parsedDraft.success) {
       return errorResponse(
         'EXTRACT_FAILED',
@@ -115,6 +119,22 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
       'Chrome could not read the active tab. Try reloading the page and opening the popup again.',
     );
   }
+}
+
+function safeParseDraftWithFallback(raw: unknown) {
+  const first = jobDraftSchema.safeParse(raw);
+  if (first.success || typeof raw !== 'object' || raw === null) return first;
+
+  const cleaned: Record<string, unknown> = {
+    ...(raw as Record<string, unknown>),
+  };
+  for (const issue of first.error.issues) {
+    const key = issue.path[0];
+    if (typeof key === 'string' && key in cleaned) {
+      Reflect.deleteProperty(cleaned, key);
+    }
+  }
+  return jobDraftSchema.safeParse(cleaned);
 }
 
 async function saveJob(draft: JobDraft): Promise<ExtensionResponse> {

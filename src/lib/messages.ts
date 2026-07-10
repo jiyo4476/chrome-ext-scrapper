@@ -56,7 +56,7 @@ export const testConnectionRequestSchema = z.object({
 
 export const extractionCandidateSchema = z.object({
   value: z.unknown(),
-  source: z.enum(['jsonld', 'meta', 'visible-text', 'url']),
+  source: z.enum(['jsonld', 'dom', 'meta', 'visible-text', 'url']),
   confidence: z.enum(['high', 'medium', 'low']),
 });
 
