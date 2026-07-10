@@ -32,6 +32,24 @@ describe('detectPlatform', () => {
     expect(result.platform).not.toBe('google');
   });
 
+  it('detects google.co.uk as google, matching Google Jobs across country TLDs', () => {
+    expect(
+      detectPlatform('https://www.google.co.uk/search?q=engineer&ibp=htl;jobs'),
+    ).toEqual({ platform: 'google', confidence: 'high' });
+  });
+
+  it.each([
+    ['https://www.indeed.com.evil-phishing.example/viewjob?jk=1', 'indeed'],
+    ['https://linkedin.com.attacker.net/jobs/view/1', 'linkedin'],
+    ['https://notglassdoor.com/job-listing/foo.htm', 'glassdoor'],
+    ['https://www.google.com.evil.example/search?ibp=htl;jobs', 'google'],
+  ])(
+    'does not misclassify a lookalike domain that merely contains %s as that platform',
+    (url, spoofedPlatform) => {
+      expect(detectPlatform(url).platform).not.toBe(spoofedPlatform);
+    },
+  );
+
   it('falls back to direct with low confidence for career/job URLs on unknown hosts', () => {
     expect(detectPlatform('https://acme.example.com/careers/123')).toEqual({
       platform: 'direct',

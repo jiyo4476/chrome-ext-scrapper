@@ -24,6 +24,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe('extractJobDraft — JSON-LD source', () => {
@@ -253,13 +254,46 @@ describe('extractJobDraft — OpenGraph fallback', () => {
       <meta property="og:site_name" content="Indeed" />
     `);
 
+    // Use a job-board platform with no dom-extraction block (linkedin) so
+    // this test isn't incidentally taxed by another platform's dynamic-wait
+    // timeout -- the guard itself is platform-agnostic across the whole
+    // JOB_BOARD_PLATFORMS set, which is exercised more broadly below.
     const { draft } = await extractJobDraft({
-      platform: 'indeed',
+      platform: 'linkedin',
       confidence: 'high',
     });
 
     expect(draft.company_name).not.toBe('Indeed');
   });
+
+  it.each([
+    'linkedin',
+    'indeed',
+    'glassdoor',
+    'dice',
+    'lever',
+    'greenhouse',
+    'workday',
+    'angellist',
+    'google',
+  ] as const)(
+    'does not use og:site_name as company_name for platform %s',
+    async (platform) => {
+      setHead('<meta property="og:site_name" content="Should Not Be Used" />');
+
+      // Some platforms (indeed/glassdoor/google) run a dom-extraction block
+      // that waits on a MutationObserver+timeout before giving up -- fake
+      // the timers so this parametrized case doesn't pay real wall-clock
+      // cost for platforms that have nothing to find. A no-op for
+      // platforms with no wait block.
+      vi.useFakeTimers();
+      const pending = extractJobDraft({ platform, confidence: 'high' });
+      await vi.advanceTimersByTimeAsync(1800);
+      const { draft } = await pending;
+
+      expect(draft.company_name).not.toBe('Should Not Be Used');
+    },
+  );
 
   it('uses og:site_name as company_name on an unrecognized site', async () => {
     setHead(`
@@ -383,11 +417,14 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
   it('falls back to no dom title candidate when nothing appears before the timeout', async () => {
     setBody('<div id="jobDescriptionText">Description only.</div>');
 
-    const { draft } = await extractJobDraft(INDEED);
+    vi.useFakeTimers();
+    const pending = extractJobDraft(INDEED);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
 
     expect(draft.job_description).toBe('Description only.');
     expect(draft.job_title).toBeUndefined();
-  }, 2000);
+  });
 });
 
 describe('extractJobDraft — Glassdoor DOM extraction', () => {
@@ -441,11 +478,50 @@ describe('extractJobDraft — Google Jobs DOM extraction', () => {
     expect(draft.job_description).toBe('Build delightful product experiences.');
   });
 
-  it('does not extract a dom title when no ARIA heading appears before the timeout', async () => {
-    setBody('<div>No structured job panel here.</div>');
+  it('prefers the aria-selected job card over the first card in a multi-result list', async () => {
+    setBody(`
+      <div>
+        <div role="heading" aria-level="2">First Listed Job</div>
+        <div>Wrong Co</div>
+      </div>
+      <div aria-selected="true">
+        <div role="heading" aria-level="2">Actually Selected Job</div>
+        <div>Correct Co</div>
+        <section>The job the user opened.</section>
+      </div>
+    `);
 
     const { draft } = await extractJobDraft(GOOGLE);
 
+    expect(draft.job_title).toBe('Actually Selected Job');
+    expect(draft.company_name).toBe('Correct Co');
+  });
+
+  it('does not fabricate a description candidate when no bounded container exists', async () => {
+    setBody(`
+      <span>
+        <span role="heading" aria-level="2">Product Engineer</span>
+        <span>Northstar Apps</span>
+      </span>
+      <section>Unrelated footer legal disclaimer text, not a job description.</section>
+    `);
+
+    const { draft } = await extractJobDraft(GOOGLE);
+
+    expect(draft.job_title).toBe('Product Engineer');
+    expect(draft.job_description).not.toBe(
+      'Unrelated footer legal disclaimer text, not a job description.',
+    );
+  });
+
+  it('does not extract a dom title when no ARIA heading appears before the timeout', async () => {
+    setBody('<div>No structured job panel here.</div>');
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(GOOGLE);
+    await vi.advanceTimersByTimeAsync(1800);
+    const { draft } = await pending;
+
     expect(draft.job_title).toBeUndefined();
-  }, 3000);
+  });
 });

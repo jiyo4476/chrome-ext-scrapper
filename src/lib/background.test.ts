@@ -146,6 +146,24 @@ describe('background save flow', () => {
     expect(response).not.toHaveProperty('draft.job_link');
   });
 
+  it('reports EXTRACT_FAILED instead of an empty draft when the injected script returns an array', async () => {
+    browserMock.tabs.query.mockResolvedValue([
+      { id: 1, url: 'https://www.glassdoor.com/job-listing/foo.htm' },
+    ]);
+    browserMock.scripting.executeScript.mockResolvedValue([
+      { result: { draft: ['not', 'a', 'draft', 'object'], candidates: {} } },
+    ]);
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    const response = await handleMessage({ type: 'EXTRACT_ACTIVE_TAB' });
+
+    expect(response).toMatchObject({
+      type: 'ERROR',
+      ok: false,
+      error: { code: 'EXTRACT_FAILED' },
+    });
+  });
+
   it('checks the authenticated API health endpoint', async () => {
     browserMock.storage.local.get.mockResolvedValue({
       'jobTracker.settings': {

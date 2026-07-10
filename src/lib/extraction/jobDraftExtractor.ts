@@ -440,27 +440,86 @@ export async function extractJobDraft(detection: {
     );
   }
 
-  async function extractGoogleJobsDom(): Promise<void> {
-    const titleEl = await waitForAny(
-      ['[role="heading"][aria-level="2"]', '[role="heading"][aria-level="3"]'],
-      1800,
+  const GOOGLE_JOB_HEADING_SELECTOR =
+    '[role="heading"][aria-level="2"], [role="heading"][aria-level="3"]';
+  const MAX_PLAUSIBLE_COMPANY_NAME_LENGTH = 80;
+
+  function queryGoogleJobHeadings(): Element[] {
+    return Array.from(document.querySelectorAll(GOOGLE_JOB_HEADING_SELECTOR));
+  }
+
+  function pickSelectedGoogleJobHeading(): Element | undefined {
+    // On a search-results page, multiple job cards can each render a
+    // heading matching this selector -- prefer the one inside a panel
+    // explicitly marked as the currently selected/expanded job over just
+    // taking the first card in the list.
+    const headings = queryGoogleJobHeadings();
+    const selected = headings.find((el) =>
+      el.closest('[aria-selected="true"], [aria-expanded="true"]'),
     );
+    return selected ?? headings[0];
+  }
+
+  function waitForSelectedGoogleJobHeading(
+    timeoutMs: number,
+  ): Promise<Element | undefined> {
+    return new Promise((resolve) => {
+      const immediate = pickSelectedGoogleJobHeading();
+      if (immediate) {
+        resolve(immediate);
+        return;
+      }
+
+      const observer = new MutationObserver(() => {
+        const el = pickSelectedGoogleJobHeading();
+        if (el) {
+          observer.disconnect();
+          clearTimeout(timer);
+          resolve(el);
+        }
+      });
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+
+      const timer = setTimeout(() => {
+        observer.disconnect();
+        resolve(undefined);
+      }, timeoutMs);
+    });
+  }
+
+  async function extractGoogleJobsDom(): Promise<void> {
+    const titleEl = await waitForSelectedGoogleJobHeading(1800);
     addCandidate('job_title', textOf(titleEl), 'dom', 'high');
     if (!titleEl) return;
 
     const titleText = textOf(titleEl);
     const companyText = textOf(titleEl.nextElementSibling);
-    if (companyText && companyText.length <= 80 && companyText !== titleText) {
+    if (
+      companyText &&
+      companyText.length <= MAX_PLAUSIBLE_COMPANY_NAME_LENGTH &&
+      companyText !== titleText
+    ) {
       addCandidate('company_name', companyText, 'dom', 'low');
     }
 
-    const container = titleEl.closest('div')?.parentElement ?? document.body;
-    addCandidate(
-      'job_description',
-      textOf(container.querySelector('section, [role="article"]')),
-      'dom',
-      'low',
-    );
+    // Only trust a real ancestor container scoped to this heading -- if
+    // none exists, omit the description candidate rather than falling back
+    // to the whole document, which can silently pick up unrelated content
+    // (another job card, page chrome, footer text, etc.).
+    const container = titleEl.closest(
+      'div, section, article, [role="article"], [role="region"]',
+    )?.parentElement;
+    if (container) {
+      addCandidate(
+        'job_description',
+        textOf(container.querySelector('section, [role="article"]')),
+        'dom',
+        'low',
+      );
+    }
   }
 
   // --- jsonld source ---------------------------------------------------
@@ -636,6 +695,11 @@ export async function extractJobDraft(detection: {
     url: 3,
     'visible-text': 4,
   };
+  const confidenceRank: Record<Confidence, number> = {
+    high: 0,
+    medium: 1,
+    low: 2,
+  };
 
   const draft: Record<string, unknown> = {};
   const confidenceMap: Partial<Record<keyof JobDraft, Confidence>> = {};
@@ -645,8 +709,15 @@ export async function extractJobDraft(detection: {
     const list = fieldCandidates[field];
     if (!list || list.length === 0) return;
 
+    // Confidence is the primary ranking signal -- a targeted but uncertain
+    // 'dom' heuristic (e.g. Google's proximity-based description guess)
+    // should not out-rank a more reliable lower-priority source just
+    // because 'dom' sits above it in the source priority order. Source
+    // priority only breaks ties between candidates of equal confidence.
     const sorted = [...list].sort(
-      (a, b) => priority[a.source] - priority[b.source],
+      (a, b) =>
+        confidenceRank[a.confidence] - confidenceRank[b.confidence] ||
+        priority[a.source] - priority[b.source],
     );
     const winner = sorted[0];
     if (winner) {
@@ -659,10 +730,6 @@ export async function extractJobDraft(detection: {
       outCandidates[field] = list;
     }
   });
-
-  if (draft.source_platform === undefined) {
-    draft.source_platform = 'other';
-  }
 
   if (Object.keys(confidenceMap).length > 0) {
     draft.extraction_confidence = confidenceMap;

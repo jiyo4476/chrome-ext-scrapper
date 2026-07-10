@@ -123,7 +123,14 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
 
 function safeParseDraftWithFallback(raw: unknown) {
   const first = jobDraftSchema.safeParse(raw);
-  if (first.success || typeof raw !== 'object' || raw === null) return first;
+  if (
+    first.success ||
+    typeof raw !== 'object' ||
+    raw === null ||
+    Array.isArray(raw)
+  ) {
+    return first;
+  }
 
   const cleaned: Record<string, unknown> = {
     ...(raw as Record<string, unknown>),
