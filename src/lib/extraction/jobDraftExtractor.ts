@@ -110,23 +110,27 @@ export async function extractJobDraft(detection: {
     return text || undefined;
   }
 
-  // Waits on several independent selector groups at once via a single
-  // shared MutationObserver, instead of one observer per group -- avoids
+  function bySelector(selectors: string[]): () => Element | undefined {
+    return () => queryFirst(selectors) ?? undefined;
+  }
+
+  // Waits on several independent element finders at once via a single
+  // shared MutationObserver, instead of one observer per finder -- avoids
   // doubling observer-callback overhead when a platform extractor needs to
-  // wait on e.g. title and description together.
+  // wait on e.g. title and description together. Each finder can be a
+  // CSS-selector lookup (see `bySelector`) or any other DOM query, e.g.
+  // matching by text content, which no CSS selector alone can express.
   function waitForEach(
-    selectorGroups: string[][],
+    finders: (() => Element | undefined)[],
     timeoutMs: number,
   ): Promise<(Element | undefined)[]> {
     return new Promise((resolve) => {
-      const results: (Element | undefined)[] = selectorGroups.map(
-        () => undefined,
-      );
-      const pending = new Set(selectorGroups.map((_, i) => i));
+      const results: (Element | undefined)[] = finders.map(() => undefined);
+      const pending = new Set(finders.map((_, i) => i));
 
       function checkPending(): boolean {
         for (const i of Array.from(pending)) {
-          const el = queryFirst(selectorGroups[i] ?? []);
+          const el = finders[i]?.();
           if (el) {
             results[i] = el;
             pending.delete(i);
@@ -401,12 +405,15 @@ export async function extractJobDraft(detection: {
     // resolves and silently miss a still-loading description.
     const [titleEl, descriptionEl] = await waitForEach(
       [
-        [
+        bySelector([
           'h1.jobsearch-JobInfoHeader-title',
           '[data-testid="jobsearch-JobInfoHeader-title"]',
           'h1',
-        ],
-        ['#jobDescriptionText', '[data-testid="jobDescriptionText"]'],
+        ]),
+        bySelector([
+          '#jobDescriptionText',
+          '[data-testid="jobDescriptionText"]',
+        ]),
       ],
       800,
     );
@@ -442,8 +449,8 @@ export async function extractJobDraft(detection: {
   async function extractGlassdoorDom(): Promise<void> {
     const [titleEl, descriptionEl] = await waitForEach(
       [
-        ['[data-test="job-title"]', 'h1'],
-        ['[data-test="jobDescriptionContent"]', 'article'],
+        bySelector(['[data-test="job-title"]', 'h1']),
+        bySelector(['[data-test="jobDescriptionContent"]', 'article']),
       ],
       800,
     );
@@ -485,6 +492,27 @@ export async function extractJobDraft(detection: {
     };
   }
 
+  function findAboutTheJobSection(): Element | undefined {
+    const heading = Array.from(document.querySelectorAll('h2')).find((h) =>
+      textOf(h)?.toLowerCase().includes('about the job'),
+    );
+    return heading?.parentElement ?? undefined;
+  }
+
+  // The matched parent contains the "About the job" heading itself as a
+  // child alongside the actual description text -- strip the heading out of
+  // a clone before reading textContent so it doesn't leak into the front of
+  // the extracted description.
+  function descriptionTextExcludingHeading(
+    section: Element,
+  ): string | undefined {
+    const clone = section.cloneNode(true) as Element;
+    clone.querySelectorAll('h2').forEach((h) => {
+      h.remove();
+    });
+    return textOf(clone);
+  }
+
   async function extractLinkedinDom(): Promise<void> {
     const { company, title } = parseLinkedinPageTitle(document.title);
     // Both fields come from an unambiguous pipe-delimited split, so both
@@ -497,18 +525,28 @@ export async function extractJobDraft(detection: {
     // the only stable, hash-free DOM selector on LinkedIn's job pages, and
     // covers cases where <title> doesn't follow the pipe-delimited pattern
     // (e.g. a split-view search results page that hasn't navigated to a
-    // dedicated job URL). job_location has no page-title source at all, so
-    // the lazy-loaded detail column (rendered after the SPA hydrates) is the
-    // only signal available -- wait on both together in one observer.
-    const [companyEl, locationEl] = await waitForEach(
+    // dedicated job URL). job_location and job_description have no
+    // page-title source at all, so their DOM selectors (rendered after the
+    // SPA hydrates) are the only signal available -- wait on all three
+    // together in one observer.
+    const [companyEl, locationEl, descriptionEl] = await waitForEach(
       [
-        ['a[href^="https://www.linkedin.com/company/"]'],
-        ['[data-testid="lazy-column"] p span'],
+        bySelector(['a[href^="https://www.linkedin.com/company/"]']),
+        bySelector(['[data-testid="lazy-column"] p span']),
+        findAboutTheJobSection,
       ],
       800,
     );
     addCandidate('company_name', textOf(companyEl), 'dom', 'high');
     addCandidate('job_location', textOf(locationEl), 'dom', 'medium');
+    addCandidate(
+      'job_description',
+      descriptionEl
+        ? descriptionTextExcludingHeading(descriptionEl)
+        : undefined,
+      'dom',
+      'high',
+    );
   }
 
   const GOOGLE_JOB_HEADING_SELECTOR =

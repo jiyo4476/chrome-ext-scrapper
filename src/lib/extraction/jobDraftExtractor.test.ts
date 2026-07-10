@@ -441,9 +441,10 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     confidence: 'high' as const,
   };
 
-  // None of these set the company profile-link anchor, so the secondary
-  // waitForEach call always runs out its full timeout -- use fake timers to
-  // avoid paying that 800ms in real wall-clock time per test.
+  // None of these set the company profile-link anchor, location column, or
+  // "About the job" section, so the secondary waitForEach call always runs
+  // out its full timeout -- use fake timers to avoid paying that 800ms in
+  // real wall-clock time per test.
 
   it('extracts job_title and company_name from the pipe-delimited page title', async () => {
     document.title = 'Senior Software Engineer | Acme Corp | LinkedIn';
@@ -498,6 +499,7 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
       <h1>Senior Software Engineer</h1>
       <a href="https://www.linkedin.com/company/acme-corp/life">Acme Corp</a>
       <div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>
+      <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
     `);
 
     const { draft } = await extractJobDraft(LINKEDIN);
@@ -511,13 +513,15 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
 
     const pending = extractJobDraft(LINKEDIN);
     setTimeout(() => {
-      // Also populate the location column in the same tick -- otherwise the
-      // still-pending location group would hold this waitForEach call open
-      // for its full real 800ms timeout before resolving.
+      // Also populate the location column and description section in the
+      // same tick -- otherwise those still-pending groups would hold this
+      // waitForEach call open for its full real 800ms timeout before
+      // resolving.
       setBody(
         document.body.innerHTML +
           '<a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>' +
-          '<div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>',
+          '<div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>' +
+          '<div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>',
       );
     }, 0);
 
@@ -544,6 +548,7 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
       <div data-testid="lazy-column">
         <p><span>Austin, TX</span></p>
       </div>
+      <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
     `);
 
     const { draft } = await extractJobDraft(LINKEDIN);
@@ -556,13 +561,15 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
 
     const pending = extractJobDraft(LINKEDIN);
     setTimeout(() => {
-      // Also populate the company anchor in the same tick -- otherwise the
-      // still-pending company group would hold this waitForEach call open
-      // for its full real 800ms timeout before resolving.
+      // Also populate the company anchor and description section in the
+      // same tick -- otherwise those still-pending groups would hold this
+      // waitForEach call open for its full real 800ms timeout before
+      // resolving.
       setBody(
         document.body.innerHTML +
           '<a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>' +
-          '<div data-testid="lazy-column"><p><span>Remote</span></p></div>',
+          '<div data-testid="lazy-column"><p><span>Remote</span></p></div>' +
+          '<div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>',
       );
     }, 0);
 
@@ -579,6 +586,82 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     const { draft } = await pending;
 
     expect(draft.job_location).toBeUndefined();
+  });
+
+  it('extracts job_description from the "About the job" section, excluding the heading text', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>
+      <div class="jobs-description">
+        <h2>About the job</h2>
+        <p>Build great products for millions of members.</p>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe(
+      'Build great products for millions of members.',
+    );
+    expect(draft.job_description).not.toContain('About the job');
+  });
+
+  it('resolves job_description after the section appears asynchronously', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>
+    `);
+
+    const pending = extractJobDraft(LINKEDIN);
+    setTimeout(() => {
+      setBody(
+        document.body.innerHTML +
+          '<div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>',
+      );
+    }, 0);
+
+    const { draft } = await pending;
+    expect(draft.job_description).toBe('Build great things.');
+  });
+
+  it('falls back to no dom job_description candidate when no "About the job" heading appears', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>
+    `);
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    // The generic low-confidence visible-text fallback still fills
+    // job_description from the whole body -- what matters here is that no
+    // high-confidence 'dom' candidate was fabricated to win over it.
+    expect(draft.extraction_confidence?.job_description).not.toBe('high');
+  });
+
+  it('ignores an unrelated heading like "About the company"', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>
+      <div class="jobs-about-company"><h2>About the company</h2><p>Founded in 2005.</p></div>
+    `);
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    // The generic low-confidence visible-text fallback picks up the whole
+    // page body (including this unrelated section), which is expected --
+    // what this test guards is that the DOM extractor itself didn't treat
+    // "About the company" as a match for "About the job".
+    expect(draft.extraction_confidence?.job_description).not.toBe('high');
   });
 });
 
