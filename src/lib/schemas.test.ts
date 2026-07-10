@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  scrapePayloadSchema,
-  toApiSourcePlatform,
-  type ScrapePayload,
-} from './schemas';
+import { scrapePayloadSchema, type ScrapePayload } from './schemas';
 
 describe('scrape payload schema', () => {
   const basePayload: ScrapePayload = {
@@ -27,7 +23,11 @@ describe('scrape payload schema', () => {
     ).toThrow();
   });
 
-  it('keeps Google Jobs compatible with the current backend enum', () => {
-    expect(toApiSourcePlatform('google')).toBe('other');
+  it('accepts google as a source_platform now that the backend enum supports it', () => {
+    const result = scrapePayloadSchema.parse({
+      ...basePayload,
+      source_platform: 'google',
+    });
+    expect(result.source_platform).toBe('google');
   });
 });

@@ -2,13 +2,11 @@ import {
   type JobDraft,
   type ScrapePayload,
   scrapePayloadSchema,
-  toApiSourcePlatform,
 } from './schemas';
 
 export function buildScrapePayload(draft: JobDraft): ScrapePayload {
   const payload = omitEmptyValues({
     ...draft,
-    source_platform: toApiSourcePlatform(draft.source_platform),
     external_job_id: cleanString(draft.external_job_id),
     company_name: cleanString(draft.company_name),
     job_title: cleanString(draft.job_title),
