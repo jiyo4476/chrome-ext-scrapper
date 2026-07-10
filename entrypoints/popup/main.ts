@@ -2,19 +2,89 @@ import { browser } from 'wxt/browser';
 import '../styles.css';
 import {
   type ExtensionResponse,
+  type ExtractionCandidates,
   type SaveJobResult,
   extensionResponseSchema,
 } from '../../src/lib/messages';
-import { type JobDraft, jobDraftSchema } from '../../src/lib/schemas';
+import {
+  buildExportFilename,
+  buildJobPostingJsonLd,
+} from '../../src/lib/jsonld';
+import {
+  applyCandidateSelection,
+  CANDIDATE_SOURCE_LABELS,
+  draftToFormValues,
+  type DraftFormField,
+  emptyFormValues,
+  type FieldError,
+  firstInvalidField,
+  formatCandidateValue,
+  formValuesToDraft,
+  FORM_FIELD_ORDER,
+  type PopupFormValues,
+  validateFormValues,
+} from '../../src/lib/popupForm';
+import type { JobDraft } from '../../src/lib/schemas';
+
+const FIELD_IDS: Record<DraftFormField, string> = {
+  job_title: 'job-title',
+  company_name: 'company-name',
+  job_link: 'job-link',
+  source_platform: 'source-platform',
+  job_location: 'job-location',
+  is_remote: 'is-remote',
+  job_description: 'job-description',
+  external_job_id: 'external-job-id',
+  date_posted: 'date-posted',
+  job_type: 'job-type',
+  experience_level: 'experience-level',
+  security_clearance_req: 'security-clearance-req',
+  salary_type: 'salary-type',
+  salary_min: 'salary-min',
+  salary_max: 'salary-max',
+  hourly_rate_min: 'hourly-rate-min',
+  hourly_rate_max: 'hourly-rate-max',
+  salary_text: 'salary-text',
+  skills: 'skills',
+  software: 'software',
+  keywords: 'keywords',
+  certifications: 'certifications',
+};
+
+const ERROR_FIELDS: DraftFormField[] = [
+  'job_link',
+  'date_posted',
+  'salary_min',
+  'salary_max',
+  'hourly_rate_min',
+  'hourly_rate_max',
+];
 
 const statusEl = document.querySelector<HTMLDivElement>('#status');
+const statusActionEl =
+  document.querySelector<HTMLAnchorElement>('#status-action');
+const form = document.querySelector<HTMLFormElement>('#job-form');
 const extractButton =
   document.querySelector<HTMLButtonElement>('#extract-button');
+const manualEntryButton = document.querySelector<HTMLButtonElement>(
+  '#manual-entry-button',
+);
+const exportButton =
+  document.querySelector<HTMLButtonElement>('#export-button');
 const saveButton = document.querySelector<HTMLButtonElement>('#save-button');
+
 let saveInFlight = false;
 
 extractButton?.addEventListener('click', () => {
   void extractActiveTab();
+});
+
+manualEntryButton?.addEventListener('click', () => {
+  enterManualEntry();
+});
+
+exportButton?.addEventListener('click', () => {
+  exportJsonLd();
 });
 
 saveButton?.addEventListener('click', () => {
@@ -24,8 +94,11 @@ saveButton?.addEventListener('click', () => {
 void extractActiveTab();
 
 async function extractActiveTab(): Promise<void> {
-  setStatus('Scanning active tab...');
-  setExtractDisabled(true);
+  clearFieldErrors();
+  renderCandidates(undefined);
+  hideStatusAction();
+  setStatus('Scanning the active tab…', 'status');
+  setBusy(true);
 
   try {
     const rawResponse: unknown = await browser.runtime.sendMessage({
@@ -34,39 +107,36 @@ async function extractActiveTab(): Promise<void> {
     const response = extensionResponseSchema.parse(rawResponse);
     renderResponse(response);
   } catch {
-    setStatus('Could not extract this page.');
+    setStatus(
+      'Could not extract this page. Try again or enter the details manually.',
+      'alert',
+    );
   } finally {
-    setExtractDisabled(false);
-  }
-}
-
-function renderResponse(response: ExtensionResponse): void {
-  if (!response.ok) {
-    setStatus(response.error.message);
-    return;
-  }
-
-  if (response.type === 'EXTRACT_ACTIVE_TAB_RESULT') {
-    renderDraft(response.draft);
-    setSaveDisabled(false);
-    setStatus('Review the extracted fields before saving.');
-    return;
-  }
-
-  if (response.type === 'SAVE_JOB_RESULT') {
-    setStatus(formatSaveResult(response.result));
+    setBusy(false);
   }
 }
 
 async function saveJob(): Promise<void> {
   if (saveInFlight) return;
 
+  clearFieldErrors();
+  const values = readFormValues();
+  const errors = validateFormValues(values);
+  if (errors.length > 0) {
+    renderFieldErrors(errors);
+    setStatus('Fix the highlighted fields before saving.', 'alert');
+    const invalidField = firstInvalidField(errors);
+    if (invalidField) focusField(invalidField);
+    return;
+  }
+
   saveInFlight = true;
-  setStatus('Saving job...');
+  hideStatusAction();
+  setStatus('Saving job…', 'status');
   setSaveDisabled(true);
 
   try {
-    const draft = readDraftFromForm();
+    const draft = formValuesToDraft(values);
     const rawResponse: unknown = await browser.runtime.sendMessage({
       type: 'SAVE_JOB',
       draft,
@@ -77,7 +147,8 @@ async function saveJob(): Promise<void> {
     setStatus(
       error instanceof Error
         ? error.message
-        : 'Review title, company, link, platform, and required settings.',
+        : 'Review the fields before saving this job.',
+      'alert',
     );
   } finally {
     saveInFlight = false;
@@ -85,24 +156,130 @@ async function saveJob(): Promise<void> {
   }
 }
 
-function renderDraft(draft: JobDraft): void {
-  setInputValue('#job-title', draft.job_title);
-  setInputValue('#company-name', draft.company_name);
-  setInputValue('#job-link', draft.job_link);
-  setInputValue('#source-platform', draft.source_platform);
-  setInputValue('#external-job-id', draft.external_job_id);
-  setInputValue('#job-description', draft.job_description);
+function enterManualEntry(): void {
+  clearFieldErrors();
+  renderCandidates(undefined);
+  hideStatusAction();
+  applyFormValues(emptyFormValues());
+  setStatus('Manual entry. Fill in the fields and save.', 'status');
+  focusField('job_title');
 }
 
-function readDraftFromForm(): JobDraft {
-  return jobDraftSchema.parse({
-    job_title: getInputValue('#job-title'),
-    company_name: getInputValue('#company-name'),
-    job_link: getInputValue('#job-link'),
-    source_platform: getInputValue('#source-platform') || 'other',
-    external_job_id: getInputValue('#external-job-id'),
-    job_description: getInputValue('#job-description'),
+function exportJsonLd(): void {
+  clearFieldErrors();
+  const values = readFormValues();
+  const errors = validateFormValues(values);
+  if (errors.length > 0) {
+    renderFieldErrors(errors);
+    setStatus('Fix the highlighted fields before exporting.', 'alert');
+    const invalidField = firstInvalidField(errors);
+    if (invalidField) focusField(invalidField);
+    return;
+  }
+
+  let draft: JobDraft;
+  try {
+    draft = formValuesToDraft(values);
+  } catch {
+    setStatus('Fix the highlighted fields before exporting.', 'alert');
+    return;
+  }
+
+  const jsonLd = buildJobPostingJsonLd(draft);
+  const filename = buildExportFilename(draft);
+  const blob = new Blob([JSON.stringify(jsonLd, null, 2)], {
+    type: 'application/ld+json',
   });
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+
+  setStatus(`Exported ${filename}.`, 'status');
+}
+
+function renderResponse(response: ExtensionResponse): void {
+  if (!response.ok) {
+    handleError(response.error.code, response.error.message);
+    return;
+  }
+
+  if (response.type === 'EXTRACT_ACTIVE_TAB_RESULT') {
+    applyFormValues(draftToFormValues(response.draft));
+    renderCandidates(response.candidates);
+    setStatus('Review the extracted fields before saving.', 'status');
+    return;
+  }
+
+  if (response.type === 'SAVE_JOB_RESULT') {
+    setStatus(formatSaveResult(response.result), 'status');
+  }
+}
+
+function handleError(code: string, message: string): void {
+  if (code === 'EXTRACT_EMPTY') {
+    enterManualEntry();
+    setStatus(
+      'No job data was found on this page. Enter the details manually.',
+      'status',
+    );
+    return;
+  }
+
+  if (code === 'OAUTH_FAILED') {
+    setStatus(message, 'alert');
+    showStatusAction();
+    return;
+  }
+
+  setStatus(message, 'alert');
+}
+
+function renderCandidates(candidates: ExtractionCandidates | undefined): void {
+  FORM_FIELD_ORDER.forEach((field) => {
+    const container = document.getElementById(`candidates-${field}`);
+    if (!container) return;
+
+    container.innerHTML = '';
+    const list = candidates?.[field];
+    if (!list || list.length < 2) {
+      container.hidden = true;
+      return;
+    }
+
+    container.hidden = false;
+    list.forEach((candidate, index) => {
+      const optionId = `candidate-${field}-${String(index)}`;
+
+      const wrapper = document.createElement('label');
+      wrapper.className = 'candidate-option';
+      wrapper.htmlFor = optionId;
+
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = `candidate-${field}`;
+      radio.id = optionId;
+      radio.addEventListener('change', () => {
+        selectCandidate(field, candidate.value);
+      });
+
+      const text = document.createElement('span');
+      text.textContent = `${CANDIDATE_SOURCE_LABELS[candidate.source]}: ${formatCandidateValue(candidate.value)}`;
+
+      wrapper.append(radio, text);
+      container.appendChild(wrapper);
+    });
+  });
+}
+
+function selectCandidate(field: DraftFormField, value: unknown): void {
+  const next = applyCandidateSelection(readFormValues(), field, value);
+  applyFormValues(next);
 }
 
 function formatSaveResult(result: SaveJobResult): string {
@@ -127,27 +304,151 @@ function mapLegacyStatus(
   return status;
 }
 
-function getInputValue(selector: string): string {
-  return (
-    document
-      .querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)
-      ?.value.trim() ?? ''
-  );
+function readFormValues(): PopupFormValues {
+  return {
+    job_title: getValue('job_title'),
+    company_name: getValue('company_name'),
+    job_link: getValue('job_link'),
+    source_platform: getValue('source_platform'),
+    job_location: getValue('job_location'),
+    is_remote: getChecked('is_remote'),
+    job_description: getValue('job_description'),
+    external_job_id: getValue('external_job_id'),
+    date_posted: getValue('date_posted'),
+    job_type: getValue('job_type'),
+    experience_level: getValue('experience_level'),
+    security_clearance_req: getChecked('security_clearance_req'),
+    salary_type: getValue('salary_type'),
+    salary_min: getValue('salary_min'),
+    salary_max: getValue('salary_max'),
+    hourly_rate_min: getValue('hourly_rate_min'),
+    hourly_rate_max: getValue('hourly_rate_max'),
+    salary_text: getValue('salary_text'),
+    skills: getValue('skills'),
+    software: getValue('software'),
+    keywords: getValue('keywords'),
+    certifications: getValue('certifications'),
+  };
 }
 
-function setInputValue(selector: string, value = ''): void {
-  const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
-    selector,
-  );
-  if (input) input.value = value;
+function applyFormValues(values: PopupFormValues): void {
+  setValue('job_title', values.job_title);
+  setValue('company_name', values.company_name);
+  setValue('job_link', values.job_link);
+  setValue('source_platform', values.source_platform);
+  setValue('job_location', values.job_location);
+  setChecked('is_remote', values.is_remote);
+  setValue('job_description', values.job_description);
+  setValue('external_job_id', values.external_job_id);
+  setValue('date_posted', values.date_posted);
+  setValue('job_type', values.job_type);
+  setValue('experience_level', values.experience_level);
+  setChecked('security_clearance_req', values.security_clearance_req);
+  setValue('salary_type', values.salary_type);
+  setValue('salary_min', values.salary_min);
+  setValue('salary_max', values.salary_max);
+  setValue('hourly_rate_min', values.hourly_rate_min);
+  setValue('hourly_rate_max', values.hourly_rate_max);
+  setValue('salary_text', values.salary_text);
+  setValue('skills', values.skills);
+  setValue('software', values.software);
+  setValue('keywords', values.keywords);
+  setValue('certifications', values.certifications);
 }
 
-function setStatus(message: string): void {
-  if (statusEl) statusEl.textContent = message;
+function clearFieldErrors(): void {
+  ERROR_FIELDS.forEach((field) => {
+    const el = document.getElementById(`error-${field}`);
+    if (el) {
+      el.textContent = '';
+      el.hidden = true;
+    }
+  });
+}
+
+function renderFieldErrors(errors: FieldError[]): void {
+  errors.forEach((error) => {
+    const el = document.getElementById(`error-${error.field}`);
+    if (el) {
+      el.textContent = error.message;
+      el.hidden = false;
+    }
+  });
+}
+
+function focusField(field: DraftFormField): void {
+  const el = document.getElementById(FIELD_IDS[field]);
+  el?.focus();
+}
+
+function getFieldElement(
+  field: DraftFormField,
+): HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null {
+  return document.getElementById(FIELD_IDS[field]) as
+    HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
+}
+
+function getValue(field: DraftFormField): string {
+  return getFieldElement(field)?.value ?? '';
+}
+
+function setValue(field: DraftFormField, value: string): void {
+  const el = getFieldElement(field);
+  if (el) el.value = value;
+}
+
+function getChecked(field: DraftFormField): boolean {
+  const el = document.getElementById(
+    FIELD_IDS[field],
+  ) as HTMLInputElement | null;
+  return el?.checked ?? false;
+}
+
+function setChecked(field: DraftFormField, checked: boolean): void {
+  const el = document.getElementById(
+    FIELD_IDS[field],
+  ) as HTMLInputElement | null;
+  if (el) el.checked = checked;
+}
+
+function setStatus(message: string, kind: 'status' | 'alert' = 'status'): void {
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.setAttribute('role', kind);
+}
+
+function showStatusAction(): void {
+  if (statusActionEl) statusActionEl.hidden = false;
+}
+
+function hideStatusAction(): void {
+  if (statusActionEl) statusActionEl.hidden = true;
+}
+
+function setBusy(disabled: boolean): void {
+  form
+    ?.querySelectorAll<
+      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+    >('input, select, textarea')
+    .forEach((el) => {
+      el.disabled = disabled;
+    });
+  setExtractDisabled(disabled);
+  setManualEntryDisabled(disabled);
+  setExportDisabled(disabled);
+  setSaveDisabled(disabled);
 }
 
 function setExtractDisabled(disabled: boolean): void {
   if (extractButton) extractButton.disabled = disabled;
+}
+
+function setManualEntryDisabled(disabled: boolean): void {
+  if (manualEntryButton) manualEntryButton.disabled = disabled;
+}
+
+function setExportDisabled(disabled: boolean): void {
+  if (exportButton) exportButton.disabled = disabled;
 }
 
 function setSaveDisabled(disabled: boolean): void {
