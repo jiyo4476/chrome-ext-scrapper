@@ -14,8 +14,6 @@ export const apiSourcePlatformSchema = z.enum([
   'google',
 ]);
 
-export const detectedPlatformSchema = apiSourcePlatformSchema;
-
 export const jobTypeSchema = z.enum([
   'full_time',
   'part_time',
@@ -36,7 +34,7 @@ export const experienceLevelSchema = z.enum([
 export const salaryTypeSchema = z.enum(['annual', 'hourly']);
 
 export const jobDraftSchema = z.object({
-  source_platform: detectedPlatformSchema.default('other'),
+  source_platform: apiSourcePlatformSchema.default('other'),
   external_job_id: z.string().min(1).optional(),
   company_name: z.string().min(1).optional(),
   job_title: z.string().min(1).optional(),
@@ -75,6 +73,5 @@ export const scrapePayloadSchema = jobDraftSchema
   .omit({ extraction_confidence: true });
 
 export type ApiSourcePlatform = z.infer<typeof apiSourcePlatformSchema>;
-export type DetectedPlatform = z.infer<typeof detectedPlatformSchema>;
 export type JobDraft = z.infer<typeof jobDraftSchema>;
 export type ScrapePayload = z.infer<typeof scrapePayloadSchema>;

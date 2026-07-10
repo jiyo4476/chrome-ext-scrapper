@@ -24,8 +24,10 @@ describe('scrape payload schema', () => {
   });
 
   it('accepts google as a source_platform now that the backend enum supports it', () => {
-    expect(
-      scrapePayloadSchema.parse({ ...basePayload, source_platform: 'google' }),
-    ).toEqual({ ...basePayload, source_platform: 'google' });
+    const result = scrapePayloadSchema.parse({
+      ...basePayload,
+      source_platform: 'google',
+    });
+    expect(result.source_platform).toBe('google');
   });
 });

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { extractGenericJobDraft } from './genericExtractor';
 
 function setHead(html: string): void {
@@ -10,10 +10,18 @@ function setBody(html: string): void {
   document.body.innerHTML = html;
 }
 
+function setLocation(url: string): void {
+  vi.stubGlobal('location', new URL(url));
+}
+
 beforeEach(() => {
   document.head.innerHTML = '';
   document.body.innerHTML = '';
   document.title = '';
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe('extractGenericJobDraft — JSON-LD source', () => {
@@ -216,6 +224,28 @@ describe('extractGenericJobDraft — visible-text fallback', () => {
       'This role has no structured data at all, just plain text.',
     );
     expect(draft.extraction_confidence?.job_title).toBe('low');
+  });
+});
+
+describe('extractGenericJobDraft — platform detection', () => {
+  it('detects a Google Jobs search results page as source_platform "google"', () => {
+    setLocation(
+      'https://www.google.com/search?q=software+engineer&ibp=htl;jobs',
+    );
+    setBody('<main><h1>Software Engineer</h1></main>');
+
+    const { draft } = extractGenericJobDraft();
+
+    expect(draft.source_platform).toBe('google');
+  });
+
+  it('does not treat a non-Google host as google even with a matching path', () => {
+    setLocation('https://example.com/jobs?ibp=htl;jobs');
+    setBody('<main><h1>Software Engineer</h1></main>');
+
+    const { draft } = extractGenericJobDraft();
+
+    expect(draft.source_platform).not.toBe('google');
   });
 });
 
