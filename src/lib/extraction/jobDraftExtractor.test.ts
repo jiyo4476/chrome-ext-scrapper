@@ -497,11 +497,13 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     setBody(`
       <h1>Senior Software Engineer</h1>
       <a href="https://www.linkedin.com/company/acme-corp/life">Acme Corp</a>
+      <div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>
     `);
 
     const { draft } = await extractJobDraft(LINKEDIN);
 
     expect(draft.company_name).toBe('Acme Corp');
+    expect(draft.job_location).toBe('Austin, TX');
   });
 
   it('resolves the company link after it appears asynchronously', async () => {
@@ -509,14 +511,19 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
 
     const pending = extractJobDraft(LINKEDIN);
     setTimeout(() => {
+      // Also populate the location column in the same tick -- otherwise the
+      // still-pending location group would hold this waitForEach call open
+      // for its full real 800ms timeout before resolving.
       setBody(
         document.body.innerHTML +
-          '<a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>',
+          '<a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>' +
+          '<div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>',
       );
     }, 0);
 
     const { draft } = await pending;
     expect(draft.company_name).toBe('Acme Corp');
+    expect(draft.job_location).toBe('Austin, TX');
   });
 
   it('falls back to no dom company_name candidate when the link never appears', async () => {
@@ -528,6 +535,50 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     const { draft } = await pending;
 
     expect(draft.company_name).toBeUndefined();
+  });
+
+  it('extracts job_location from the lazy-loaded detail column', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>Austin, TX</span></p>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_location).toBe('Austin, TX');
+  });
+
+  it('resolves job_location after the detail column appears asynchronously', async () => {
+    setBody('<h1>Senior Software Engineer</h1>');
+
+    const pending = extractJobDraft(LINKEDIN);
+    setTimeout(() => {
+      // Also populate the company anchor in the same tick -- otherwise the
+      // still-pending company group would hold this waitForEach call open
+      // for its full real 800ms timeout before resolving.
+      setBody(
+        document.body.innerHTML +
+          '<a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>' +
+          '<div data-testid="lazy-column"><p><span>Remote</span></p></div>',
+      );
+    }, 0);
+
+    const { draft } = await pending;
+    expect(draft.job_location).toBe('Remote');
+  });
+
+  it('falls back to no dom job_location candidate when the detail column never appears', async () => {
+    setBody('<h1>Senior Software Engineer</h1>');
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    expect(draft.job_location).toBeUndefined();
   });
 });
 

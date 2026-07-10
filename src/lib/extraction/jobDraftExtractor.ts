@@ -497,12 +497,18 @@ export async function extractJobDraft(detection: {
     // the only stable, hash-free DOM selector on LinkedIn's job pages, and
     // covers cases where <title> doesn't follow the pipe-delimited pattern
     // (e.g. a split-view search results page that hasn't navigated to a
-    // dedicated job URL).
-    const [companyEl] = await waitForEach(
-      [['a[href^="https://www.linkedin.com/company/"]']],
+    // dedicated job URL). job_location has no page-title source at all, so
+    // the lazy-loaded detail column (rendered after the SPA hydrates) is the
+    // only signal available -- wait on both together in one observer.
+    const [companyEl, locationEl] = await waitForEach(
+      [
+        ['a[href^="https://www.linkedin.com/company/"]'],
+        ['[data-testid="lazy-column"] p span'],
+      ],
       800,
     );
     addCandidate('company_name', textOf(companyEl), 'dom', 'high');
+    addCandidate('job_location', textOf(locationEl), 'dom', 'medium');
   }
 
   const GOOGLE_JOB_HEADING_SELECTOR =
