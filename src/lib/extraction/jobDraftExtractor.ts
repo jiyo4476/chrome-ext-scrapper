@@ -465,10 +465,39 @@ export async function extractJobDraft(detection: {
     );
   }
 
+  // LinkedIn's own <title> tag already spells out
+  // "{Title} | {Company} | LinkedIn" (optionally prefixed with an
+  // unread-notification badge like "(3) "). Parsing it is available the
+  // instant the page loads, unlike any DOM selector, which depends on
+  // LinkedIn's client-side render and rotates classnames across deploys.
+  function parseLinkedinPageTitle(rawTitle: string): {
+    company?: string | undefined;
+    title?: string | undefined;
+  } {
+    const withoutBadge = rawTitle.replace(/^\(\d+\)\s*/, '');
+    const parts = withoutBadge.split('|').map((part) => part.trim());
+    if (parts.length < 3 || parts.at(-1)?.toLowerCase() !== 'linkedin') {
+      return {};
+    }
+    return {
+      title: parts[0] || undefined,
+      company: parts[1] || undefined,
+    };
+  }
+
   async function extractLinkedinDom(): Promise<void> {
-    // The employer's own profile link is the only stable, hash-free signal
-    // for company name on LinkedIn's job pages -- the visible text near the
-    // title is otherwise laid out with classnames that rotate per deploy.
+    const { company, title } = parseLinkedinPageTitle(document.title);
+    // Both fields come from an unambiguous pipe-delimited split, so both
+    // are as trustworthy as any other platform's dom-sourced high-confidence
+    // candidate.
+    addCandidate('company_name', company, 'dom', 'high');
+    addCandidate('job_title', title, 'dom', 'high');
+
+    // Secondary signal for company_name: the employer's own profile link is
+    // the only stable, hash-free DOM selector on LinkedIn's job pages, and
+    // covers cases where <title> doesn't follow the pipe-delimited pattern
+    // (e.g. a split-view search results page that hasn't navigated to a
+    // dedicated job URL).
     const [companyEl] = await waitForEach(
       [['a[href^="https://www.linkedin.com/company/"]']],
       800,

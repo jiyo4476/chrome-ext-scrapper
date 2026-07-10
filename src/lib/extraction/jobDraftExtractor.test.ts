@@ -441,6 +441,58 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     confidence: 'high' as const,
   };
 
+  // None of these set the company profile-link anchor, so the secondary
+  // waitForEach call always runs out its full timeout -- use fake timers to
+  // avoid paying that 800ms in real wall-clock time per test.
+
+  it('extracts job_title and company_name from the pipe-delimited page title', async () => {
+    document.title = 'Senior Software Engineer | Acme Corp | LinkedIn';
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    expect(draft.job_title).toBe('Senior Software Engineer');
+    expect(draft.company_name).toBe('Acme Corp');
+  });
+
+  it('strips a leading unread-notification badge from the page title', async () => {
+    document.title = '(3) Senior Software Engineer | Acme Corp | LinkedIn';
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    expect(draft.job_title).toBe('Senior Software Engineer');
+    expect(draft.company_name).toBe('Acme Corp');
+  });
+
+  it('adds no page-title candidate when the title has fewer than 3 pipe-delimited segments', async () => {
+    document.title = 'Software Engineer jobs in United States | LinkedIn';
+    setBody('<h1>Software Engineer jobs in United States</h1>');
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    expect(draft.company_name).toBeUndefined();
+  });
+
+  it('adds no page-title candidate when the last segment is not "LinkedIn"', async () => {
+    document.title = 'Senior Software Engineer | Acme Corp | Careers';
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    expect(draft.company_name).toBeUndefined();
+    expect(draft.job_title).toBeUndefined();
+  });
+
   it('extracts company_name from the employer profile link', async () => {
     setBody(`
       <h1>Senior Software Engineer</h1>
