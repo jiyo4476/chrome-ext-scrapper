@@ -23,13 +23,7 @@ export async function postScrapePayload(
   settings: ExtensionSettings,
   payload: ScrapePayload,
 ): Promise<SaveJobResult> {
-  const apiBaseUrl = settings.apiBaseUrl.trim().replace(/\/+$/, '');
-  if (!apiBaseUrl) {
-    throw new ApiClientError(
-      'API_UNCONFIGURED',
-      'Add an API base URL in Settings before saving.',
-    );
-  }
+  const apiBaseUrl = getApiBaseUrl(settings);
 
   const response = await fetch(`${apiBaseUrl}/api/scrape`, {
     method: 'POST',
@@ -68,6 +62,51 @@ export async function postScrapePayload(
   }
 
   return saveJobResultSchema.parse(responseBody ?? {});
+}
+
+export async function testAuthConnection(
+  settings: ExtensionSettings,
+): Promise<void> {
+  const apiBaseUrl = getApiBaseUrl(settings);
+  const response = await fetch(`${apiBaseUrl}/api/health/auth`, {
+    method: 'GET',
+    headers: buildHeaders(settings),
+  }).catch((error: unknown) => {
+    throw new ApiClientError(
+      'API_NETWORK_FAILED',
+      'Could not reach the Job Tracker API.',
+      stringifyUnknown(error),
+    );
+  });
+
+  const responseBody = await readJsonResponse(response);
+  if (response.status === 401 || response.status === 403) {
+    throw new ApiClientError(
+      'API_AUTH_FAILED',
+      'The Job Tracker API rejected these credentials.',
+      JSON.stringify(responseBody),
+    );
+  }
+
+  if (!response.ok) {
+    throw new ApiClientError(
+      'API_UNEXPECTED_RESPONSE',
+      `The Job Tracker API returned HTTP ${String(response.status)}.`,
+      JSON.stringify(responseBody),
+    );
+  }
+}
+
+function getApiBaseUrl(settings: ExtensionSettings): string {
+  const apiBaseUrl = settings.apiBaseUrl.trim().replace(/\/+$/, '');
+  if (!apiBaseUrl) {
+    throw new ApiClientError(
+      'API_UNCONFIGURED',
+      'Add an API base URL in Settings before connecting.',
+    );
+  }
+
+  return apiBaseUrl;
 }
 
 function buildHeaders(settings: ExtensionSettings): HeadersInit {

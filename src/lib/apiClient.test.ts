@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { postScrapePayload } from './apiClient';
+import { postScrapePayload, testAuthConnection } from './apiClient';
 import type { ScrapePayload } from './schemas';
 
 describe('postScrapePayload', () => {
@@ -78,5 +78,49 @@ describe('postScrapePayload', () => {
     ).rejects.toMatchObject({
       code: 'API_AUTH_FAILED',
     });
+  });
+});
+
+describe('testAuthConnection', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('checks /api/health/auth with OAuth bearer auth', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      testAuthConnection({
+        apiBaseUrl: 'http://localhost:3000/',
+        authentikBaseUrl: 'https://auth.yjimmy.dev',
+        oauthClientId: 'job-tracker-extension',
+        oauthScope: 'openid profile email',
+        oauthAccessToken: 'oauth-token',
+        oauthRefreshToken: '',
+        oauthExpiresAt: Date.now() + 300_000,
+        apiKey: '',
+        autoDetect: false,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:3000/api/health/auth',
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer oauth-token',
+        },
+      },
+    );
   });
 });
