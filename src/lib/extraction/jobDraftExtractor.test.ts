@@ -452,7 +452,10 @@ describe('extractJobDraft — Glassdoor DOM extraction', () => {
   it('extracts a partial draft when only some Glassdoor selectors are present', async () => {
     setBody('<h1 data-test="job-title">Frontend Developer</h1>');
 
-    const { draft } = await extractJobDraft(GLASSDOOR);
+    vi.useFakeTimers();
+    const pending = extractJobDraft(GLASSDOOR);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
 
     expect(draft.job_title).toBe('Frontend Developer');
     expect(draft.company_name).toBeUndefined();
@@ -495,6 +498,37 @@ describe('extractJobDraft — Google Jobs DOM extraction', () => {
 
     expect(draft.job_title).toBe('Actually Selected Job');
     expect(draft.company_name).toBe('Correct Co');
+    expect(draft.job_description).toBe('The job the user opened.');
+  });
+
+  it('picks up selection state applied to an existing card via attribute mutation, not just element insertion', async () => {
+    setBody(`
+      <div>
+        <div role="heading" aria-level="2">First Listed Job</div>
+        <div>Wrong Co</div>
+      </div>
+      <div>
+        <div role="heading" aria-level="2">Actually Selected Job</div>
+        <div>Correct Co</div>
+        <section>The job the user opened.</section>
+      </div>
+    `);
+    const secondCard = document.body.children[1];
+    if (!secondCard) throw new Error('expected a second card in the fixture');
+
+    const pending = extractJobDraft(GOOGLE);
+    // Some SPAs mark the active card by toggling an attribute on an
+    // already-mounted node rather than inserting new elements -- the
+    // observer must react to this, not just to childList changes.
+    setTimeout(() => {
+      secondCard.setAttribute('aria-selected', 'true');
+    }, 0);
+
+    const { draft } = await pending;
+
+    expect(draft.job_title).toBe('Actually Selected Job');
+    expect(draft.company_name).toBe('Correct Co');
+    expect(draft.job_description).toBe('The job the user opened.');
   });
 
   it('does not fabricate a description candidate when no bounded container exists', async () => {

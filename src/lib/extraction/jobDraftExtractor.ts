@@ -366,15 +366,26 @@ export async function extractJobDraft(detection: {
   // --- platform-specific DOM extraction -------------------------------------
 
   async function extractIndeedDom(): Promise<void> {
-    const titleEl = await waitForAny(
-      [
-        'h1.jobsearch-JobInfoHeader-title',
-        '[data-testid="jobsearch-JobInfoHeader-title"]',
-        'h1',
-      ],
-      800,
-    );
+    // Wait on title and description together -- the header commonly paints
+    // before #jobDescriptionText, which Indeed often populates via a
+    // follow-up XHR. Waiting on title alone would return as soon as it
+    // resolves and silently miss a still-loading description.
+    const [titleEl, descriptionEl] = await Promise.all([
+      waitForAny(
+        [
+          'h1.jobsearch-JobInfoHeader-title',
+          '[data-testid="jobsearch-JobInfoHeader-title"]',
+          'h1',
+        ],
+        800,
+      ),
+      waitForAny(
+        ['#jobDescriptionText', '[data-testid="jobDescriptionText"]'],
+        800,
+      ),
+    ]);
     addCandidate('job_title', textOf(titleEl), 'dom', 'high');
+    addCandidate('job_description', textOf(descriptionEl), 'dom', 'high');
 
     addCandidate(
       'company_name',
@@ -400,23 +411,15 @@ export async function extractJobDraft(detection: {
       'dom',
       'medium',
     );
-
-    addCandidate(
-      'job_description',
-      textOf(
-        queryFirst([
-          '#jobDescriptionText',
-          '[data-testid="jobDescriptionText"]',
-        ]),
-      ),
-      'dom',
-      'high',
-    );
   }
 
   async function extractGlassdoorDom(): Promise<void> {
-    const titleEl = await waitForAny(['[data-test="job-title"]', 'h1'], 800);
+    const [titleEl, descriptionEl] = await Promise.all([
+      waitForAny(['[data-test="job-title"]', 'h1'], 800),
+      waitForAny(['[data-test="jobDescriptionContent"]', 'article'], 800),
+    ]);
     addCandidate('job_title', textOf(titleEl), 'dom', 'high');
+    addCandidate('job_description', textOf(descriptionEl), 'dom', 'high');
 
     addCandidate(
       'company_name',
@@ -431,13 +434,6 @@ export async function extractJobDraft(detection: {
       'dom',
       'medium',
     );
-
-    addCandidate(
-      'job_description',
-      textOf(queryFirst(['[data-test="jobDescriptionContent"]', 'article'])),
-      'dom',
-      'high',
-    );
   }
 
   const GOOGLE_JOB_HEADING_SELECTOR =
@@ -448,16 +444,52 @@ export async function extractJobDraft(detection: {
     return Array.from(document.querySelectorAll(GOOGLE_JOB_HEADING_SELECTOR));
   }
 
-  function pickSelectedGoogleJobHeading(): Element | undefined {
+  function findExplicitlySelectedGoogleJobHeading(): Element | undefined {
     // On a search-results page, multiple job cards can each render a
     // heading matching this selector -- prefer the one inside a panel
     // explicitly marked as the currently selected/expanded job over just
     // taking the first card in the list.
-    const headings = queryGoogleJobHeadings();
-    const selected = headings.find((el) =>
+    return queryGoogleJobHeadings().find((el) =>
       el.closest('[aria-selected="true"], [aria-expanded="true"]'),
     );
-    return selected ?? headings[0];
+  }
+
+  function pickSelectedGoogleJobHeading(): Element | undefined {
+    const headings = queryGoogleJobHeadings();
+    // With more than one heading present and none yet marked selected, the
+    // choice is genuinely ambiguous -- return undefined so the caller keeps
+    // waiting for a selection signal instead of eagerly guessing headings[0].
+    // With exactly one heading there's nothing to disambiguate, so resolve
+    // immediately rather than waiting out the full timeout on every
+    // single-result page.
+    return (
+      findExplicitlySelectedGoogleJobHeading() ??
+      (headings.length === 1 ? headings[0] : undefined)
+    );
+  }
+
+  function pickGoogleJobDescriptionContainer(
+    titleEl: Element,
+  ): Element | undefined {
+    // Prefer the ancestor explicitly marked as the currently selected/
+    // expanded job card -- this is the only scope guaranteed not to leak
+    // content from an adjacent card on a multi-result page.
+    const selectedCard = titleEl.closest(
+      '[aria-selected="true"], [aria-expanded="true"]',
+    );
+    if (selectedCard) return selectedCard;
+
+    // Single-result pages often carry no explicit selection state. Fall
+    // back to a bounded ancestor container, searching from the heading's
+    // *parent* rather than the heading itself -- closest() matches the
+    // element itself first, and the heading is frequently a <div>, one of
+    // this selector's own tags, which would otherwise make the "bounded"
+    // check pass trivially and land one level too high.
+    return (
+      titleEl.parentElement?.closest(
+        'div, section, article, [role="article"], [role="region"]',
+      ) ?? undefined
+    );
   }
 
   function waitForSelectedGoogleJobHeading(
@@ -481,11 +513,20 @@ export async function extractJobDraft(detection: {
       observer.observe(document.documentElement, {
         childList: true,
         subtree: true,
+        // Some SPAs toggle aria-selected/aria-expanded on already-mounted
+        // card nodes instead of inserting new elements -- without watching
+        // attributes, that toggle wouldn't retrigger evaluation and this
+        // could resolve to the wrong (first) heading before selection state
+        // ever lands.
+        attributes: true,
+        attributeFilter: ['aria-selected', 'aria-expanded'],
       });
 
       const timer = setTimeout(() => {
         observer.disconnect();
-        resolve(undefined);
+        // No explicit selection ever appeared -- fall back to the first
+        // heading found, if any, rather than surfacing nothing.
+        resolve(queryGoogleJobHeadings()[0]);
       }, timeoutMs);
     });
   }
@@ -505,13 +546,7 @@ export async function extractJobDraft(detection: {
       addCandidate('company_name', companyText, 'dom', 'low');
     }
 
-    // Only trust a real ancestor container scoped to this heading -- if
-    // none exists, omit the description candidate rather than falling back
-    // to the whole document, which can silently pick up unrelated content
-    // (another job card, page chrome, footer text, etc.).
-    const container = titleEl.closest(
-      'div, section, article, [role="article"], [role="region"]',
-    )?.parentElement;
+    const container = pickGoogleJobDescriptionContainer(titleEl);
     if (container) {
       addCandidate(
         'job_description',
