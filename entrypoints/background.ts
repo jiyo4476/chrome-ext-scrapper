@@ -3,6 +3,7 @@ import {
   type ExtensionErrorCode,
   type ExtensionMessage,
   type ExtensionResponse,
+  type ExtractionCandidate,
   extensionMessageSchema,
 } from '../src/lib/messages';
 import {
@@ -10,7 +11,8 @@ import {
   postScrapePayload,
   testAuthConnection,
 } from '../src/lib/apiClient';
-import { extractGenericJobDraft } from '../src/lib/extraction/genericExtractor';
+import { detectPlatform } from '../src/lib/extraction/detectPlatform';
+import { extractJobDraft } from '../src/lib/extraction/jobDraftExtractor';
 import { getValidAccessToken, signInWithAuthentik } from '../src/lib/oauth';
 import { buildScrapePayload } from '../src/lib/payload';
 import { type JobDraft, jobDraftSchema } from '../src/lib/schemas';
@@ -81,10 +83,13 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
     return errorResponse('TAB_NOT_FOUND', 'No active tab is available.');
   }
 
+  const detection = detectPlatform(tab.url ?? '');
+
   try {
     const [result] = await browser.scripting.executeScript({
       target: { tabId: tab.id },
-      func: extractGenericJobDraft,
+      func: extractJobDraft,
+      args: [detection],
     });
 
     const extraction = result?.result;
@@ -95,7 +100,7 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
       );
     }
 
-    const parsedDraft = jobDraftSchema.safeParse(extraction.draft);
+    const parsedDraft = safeParseDraftWithFallback(extraction.draft);
     if (!parsedDraft.success) {
       return errorResponse(
         'EXTRACT_FAILED',
@@ -107,7 +112,7 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
       type: 'EXTRACT_ACTIVE_TAB_RESULT',
       ok: true,
       draft: parsedDraft.data,
-      candidates: extraction.candidates,
+      candidates: filterInvalidCandidates(extraction.candidates),
     };
   } catch {
     return errorResponse(
@@ -115,6 +120,64 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
       'Chrome could not read the active tab. Try reloading the page and opening the popup again.',
     );
   }
+}
+
+// safeParseDraftWithFallback strips invalid fields out of the returned
+// draft, but the raw candidates object it's paired with comes from the same
+// unvalidated page-script output -- without this, the field-review picker
+// could still offer a value that was just rejected from the draft as a
+// selectable option. Drop any candidate whose value doesn't pass its
+// field's own schema, so the picker never re-surfaces something already
+// known to be invalid.
+function filterInvalidCandidates(
+  candidates: unknown,
+): Record<string, ExtractionCandidate[]> {
+  if (!candidates || typeof candidates !== 'object') return {};
+
+  const shape = jobDraftSchema.shape as Record<
+    string,
+    { safeParse: (value: unknown) => { success: boolean } }
+  >;
+  const filtered: Record<string, ExtractionCandidate[]> = {};
+
+  for (const [field, list] of Object.entries(
+    candidates as Record<string, unknown>,
+  )) {
+    const fieldSchema = shape[field];
+    if (!fieldSchema || !Array.isArray(list)) continue;
+
+    const validList = (list as ExtractionCandidate[]).filter(
+      (candidate) => fieldSchema.safeParse(candidate.value).success,
+    );
+    if (validList.length > 0) {
+      filtered[field] = validList;
+    }
+  }
+
+  return filtered;
+}
+
+function safeParseDraftWithFallback(raw: unknown) {
+  const first = jobDraftSchema.safeParse(raw);
+  if (
+    first.success ||
+    typeof raw !== 'object' ||
+    raw === null ||
+    Array.isArray(raw)
+  ) {
+    return first;
+  }
+
+  const cleaned: Record<string, unknown> = {
+    ...(raw as Record<string, unknown>),
+  };
+  for (const issue of first.error.issues) {
+    const key = issue.path[0];
+    if (typeof key === 'string' && key in cleaned) {
+      Reflect.deleteProperty(cleaned, key);
+    }
+  }
+  return jobDraftSchema.safeParse(cleaned);
 }
 
 async function saveJob(draft: JobDraft): Promise<ExtensionResponse> {

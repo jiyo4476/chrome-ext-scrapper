@@ -270,13 +270,14 @@ function isValidUrl(value: string): boolean {
 // --- candidate review mode ---------------------------------------------------
 
 export type ExtractionCandidateSource =
-  'jsonld' | 'meta' | 'visible-text' | 'url';
+  'jsonld' | 'dom' | 'meta' | 'visible-text' | 'url';
 
 export const CANDIDATE_SOURCE_LABELS: Record<
   ExtractionCandidateSource,
   string
 > = {
   jsonld: 'From page data',
+  dom: 'From page layout',
   meta: 'From meta tags',
   'visible-text': 'From page text',
   url: 'From URL',

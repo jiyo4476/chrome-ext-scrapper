@@ -64,6 +64,150 @@ describe('background save flow', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('detects the platform from the active tab URL and passes it to extraction', async () => {
+    browserMock.tabs.query.mockResolvedValue([
+      { id: 1, url: 'https://www.indeed.com/viewjob?jk=abc123' },
+    ]);
+    browserMock.scripting.executeScript.mockResolvedValue([
+      {
+        result: {
+          draft: {
+            source_platform: 'indeed',
+            external_job_id: 'abc123',
+            company_name: 'Acme',
+            job_title: 'Software Engineer',
+            job_link: 'https://www.indeed.com/viewjob?jk=abc123',
+          },
+          candidates: {},
+        },
+      },
+    ]);
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    const response = await handleMessage({ type: 'EXTRACT_ACTIVE_TAB' });
+
+    expect(response).toMatchObject({
+      type: 'EXTRACT_ACTIVE_TAB_RESULT',
+      ok: true,
+    });
+    expect(browserMock.scripting.executeScript).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: [{ platform: 'indeed', confidence: 'high' }],
+      }),
+    );
+  });
+
+  it('returns TAB_NOT_FOUND when no active tab is available', async () => {
+    browserMock.tabs.query.mockResolvedValue([]);
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    const response = await handleMessage({ type: 'EXTRACT_ACTIVE_TAB' });
+
+    expect(response).toMatchObject({
+      type: 'ERROR',
+      ok: false,
+      error: { code: 'TAB_NOT_FOUND' },
+    });
+    expect(browserMock.scripting.executeScript).not.toHaveBeenCalled();
+  });
+
+  it('strips only the invalid field from a partially malformed draft instead of discarding it entirely', async () => {
+    browserMock.tabs.query.mockResolvedValue([
+      { id: 1, url: 'https://www.glassdoor.com/job-listing/foo.htm' },
+    ]);
+    browserMock.scripting.executeScript.mockResolvedValue([
+      {
+        result: {
+          draft: {
+            source_platform: 'glassdoor',
+            external_job_id: 'foo',
+            company_name: 'Acme',
+            job_title: 'Software Engineer',
+            job_link: 'not a valid url',
+          },
+          candidates: {},
+        },
+      },
+    ]);
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    const response = await handleMessage({ type: 'EXTRACT_ACTIVE_TAB' });
+
+    expect(response).toMatchObject({
+      type: 'EXTRACT_ACTIVE_TAB_RESULT',
+      ok: true,
+      draft: {
+        source_platform: 'glassdoor',
+        external_job_id: 'foo',
+        company_name: 'Acme',
+        job_title: 'Software Engineer',
+      },
+    });
+    expect(response).not.toHaveProperty('draft.job_link');
+  });
+
+  it('drops an invalid candidate value from the picker instead of re-offering something already stripped from the draft', async () => {
+    browserMock.tabs.query.mockResolvedValue([
+      { id: 1, url: 'https://www.glassdoor.com/job-listing/foo.htm' },
+    ]);
+    browserMock.scripting.executeScript.mockResolvedValue([
+      {
+        result: {
+          draft: {
+            source_platform: 'glassdoor',
+            external_job_id: 'foo',
+            company_name: 'Acme',
+            job_title: 'Software Engineer',
+            job_link: 'not a valid url',
+          },
+          candidates: {
+            job_link: [
+              {
+                value: 'not a valid url',
+                source: 'meta',
+                confidence: 'medium',
+              },
+              {
+                value: 'https://example.com/jobs/foo',
+                source: 'url',
+                confidence: 'medium',
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    const response = await handleMessage({ type: 'EXTRACT_ACTIVE_TAB' });
+
+    expect(response).toMatchObject({
+      type: 'EXTRACT_ACTIVE_TAB_RESULT',
+      ok: true,
+      candidates: {
+        job_link: [{ value: 'https://example.com/jobs/foo', source: 'url' }],
+      },
+    });
+  });
+
+  it('reports EXTRACT_FAILED instead of an empty draft when the injected script returns an array', async () => {
+    browserMock.tabs.query.mockResolvedValue([
+      { id: 1, url: 'https://www.glassdoor.com/job-listing/foo.htm' },
+    ]);
+    browserMock.scripting.executeScript.mockResolvedValue([
+      { result: { draft: ['not', 'a', 'draft', 'object'], candidates: {} } },
+    ]);
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    const response = await handleMessage({ type: 'EXTRACT_ACTIVE_TAB' });
+
+    expect(response).toMatchObject({
+      type: 'ERROR',
+      ok: false,
+      error: { code: 'EXTRACT_FAILED' },
+    });
+  });
+
   it('checks the authenticated API health endpoint', async () => {
     browserMock.storage.local.get.mockResolvedValue({
       'jobTracker.settings': {
