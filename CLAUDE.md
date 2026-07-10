@@ -40,13 +40,13 @@ npm run zip
 Documented in the workspace vault at `../.obsidian/App/API Reference.md`; implemented at `../job-tracker-nextjs/src/app/api/scrape/route.ts` with the Zod schema in `../job-tracker-nextjs/src/lib/schemas.ts`.
 
 - **Endpoint:** `POST /api/scrape` on the Next.js app (default `http://localhost:3000`), header `Authorization: Bearer <OAuth2 access token>`.
-- **Required fields:** `source_platform` (enum: `linkedin|indeed|glassdoor|dice|lever|greenhouse|workday|angellist|direct|other`), `external_job_id`, `company_name`, `job_title`, `job_link` (URL).
+- **Required fields:** `source_platform` (enum: `linkedin|indeed|glassdoor|dice|lever|greenhouse|workday|angellist|direct|other|google`), `external_job_id`, `company_name`, `job_title`, `job_link` (URL).
 - **Response:** always `{ action: 'created' | 'updated' | 'duplicate_skipped', job_id }`. Use `job_id` to render an "Open in Job Tracker" link to `{BASE_URL}/jobs/{job_id}`.
 - **Auth probe:** `GET /api/health/auth` returns `{ ok: true }` when the Authentik-issued bearer token is accepted and `401 { error: 'Unauthorized' }` when rejected.
 - **Tags:** `skills`, `software`, `keywords`, `certifications` arrays default to `[]`. Prefer sending `job_description` and leaving `skills` empty/omitted so the server can run NLP extraction.
 - **Omit `posting_md_path`:** that field belongs to the Python scraper, which writes markdown files into a shared `postings/` volume the extension cannot access.
 - **Salary:** annual salaries are integer cents (`salary_min`/`salary_max`); hourly rates are decimal dollars (`hourly_rate_min`/`hourly_rate_max`), with `salary_type: 'annual' | 'hourly'`. When unsure how to parse, send `salary_text` and omit numeric fields.
-- **Google Jobs:** map detected Google Jobs pages to `source_platform: 'other'` until the backend enum adds `google` (tracked as API-010).
+- **Google Jobs:** detected Google Jobs pages map to `source_platform: 'google'` (backend enum updated in API-010, deployed 2026-07-10).
 - **Dedup is server-authoritative:** the extension needs no local dedup.
 
 ---

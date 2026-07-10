@@ -17,7 +17,7 @@ describe('buildScrapePayload', () => {
         },
       }),
     ).toEqual({
-      source_platform: 'other',
+      source_platform: 'google',
       external_job_id: 'abc123',
       company_name: 'Acme',
       job_title: 'Senior Software Engineer',

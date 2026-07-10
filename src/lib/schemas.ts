@@ -11,12 +11,10 @@ export const apiSourcePlatformSchema = z.enum([
   'angellist',
   'direct',
   'other',
-]);
-
-export const detectedPlatformSchema = z.enum([
-  ...apiSourcePlatformSchema.options,
   'google',
 ]);
+
+export const detectedPlatformSchema = apiSourcePlatformSchema;
 
 export const jobTypeSchema = z.enum([
   'full_time',
@@ -80,12 +78,3 @@ export type ApiSourcePlatform = z.infer<typeof apiSourcePlatformSchema>;
 export type DetectedPlatform = z.infer<typeof detectedPlatformSchema>;
 export type JobDraft = z.infer<typeof jobDraftSchema>;
 export type ScrapePayload = z.infer<typeof scrapePayloadSchema>;
-
-export function toApiSourcePlatform(
-  platform: DetectedPlatform,
-): ApiSourcePlatform {
-  if (platform === 'google') {
-    return 'other';
-  }
-  return platform;
-}
