@@ -385,7 +385,8 @@ export async function extractJobDraft(detection: {
 
   function inferExternalId(url: string, title?: string): string {
     const parsed = new URL(url);
-    const indeedKey = parsed.searchParams.get('jk');
+    const indeedKey =
+      parsed.searchParams.get('jk') ?? parsed.searchParams.get('vjk');
     if (indeedKey) return indeedKey;
 
     const pathId = parsed.pathname.split('/').filter(Boolean).at(-1);

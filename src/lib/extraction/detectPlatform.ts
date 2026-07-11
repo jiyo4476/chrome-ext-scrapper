@@ -37,7 +37,9 @@ export function isAutoScrapeUrl(url: string): boolean {
     return path.startsWith('/jobs/view/') || path.startsWith('/jobs/search');
   }
   if (hostMatches(host, 'indeed.com')) {
-    return path === '/viewjob' || path === '/jobs';
+    const jobKey =
+      parsed.searchParams.get('jk') ?? parsed.searchParams.get('vjk');
+    return Boolean(jobKey) && (path === '/viewjob' || path === '/jobs');
   }
   if (hostMatches(host, 'glassdoor.com')) {
     return path.includes('/job-listing/');

@@ -214,6 +214,22 @@ describe('background save flow', () => {
     expect(browserMock.scripting.executeScript).not.toHaveBeenCalled();
   });
 
+  it('does not inject the scraper on a bare Indeed results page', async () => {
+    browserMock.tabs.query.mockResolvedValue([
+      { id: 1, url: 'https://www.indeed.com/jobs?q=engineer' },
+    ]);
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    const response = await handleMessage({ type: 'EXTRACT_ACTIVE_TAB' });
+
+    expect(response).toMatchObject({
+      type: 'ERROR',
+      ok: false,
+      error: { code: 'DOMAIN_NOT_SUPPORTED' },
+    });
+    expect(browserMock.scripting.executeScript).not.toHaveBeenCalled();
+  });
+
   it('strips only the invalid field from a partially malformed draft instead of discarding it entirely', async () => {
     browserMock.tabs.query.mockResolvedValue([
       { id: 1, url: 'https://www.glassdoor.com/job-listing/foo.htm' },

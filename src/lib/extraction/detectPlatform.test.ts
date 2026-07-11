@@ -99,7 +99,7 @@ describe('isAutoScrapeUrl', () => {
     'https://www.linkedin.com/jobs/view/123',
     'https://www.linkedin.com/jobs/search/?keywords=engineer',
     'https://www.indeed.com/viewjob?jk=abc123',
-    'https://www.indeed.com/jobs?q=engineer',
+    'https://www.indeed.com/jobs?q=engineer&vjk=abc123',
     'https://www.glassdoor.com/job-listing/software-engineer-acme.htm?jl=123',
     'https://www.dice.com/job-detail/123e4567-e89b-12d3-a456-426614174000',
   ])('allows a supported provider job page: %s', (url) => {
@@ -110,6 +110,8 @@ describe('isAutoScrapeUrl', () => {
     'http://www.linkedin.com/jobs/view/123',
     'https://www.linkedin.com/feed/',
     'https://www.indeed.com/companies',
+    'https://www.indeed.com/jobs?q=engineer',
+    'https://www.indeed.com/viewjob',
     'https://www.glassdoor.com/Reviews/index.htm',
     'https://www.dice.com/companies',
     'https://linkedin.com.attacker.net/jobs/view/123',

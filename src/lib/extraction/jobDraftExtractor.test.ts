@@ -944,6 +944,19 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
     expect(draft.job_description).toBe('Description only.');
     expect(draft.job_title).toBeUndefined();
   });
+
+  it('uses the selected split-view vjk value as the Indeed job ID', async () => {
+    window.history.replaceState({}, '', '/jobs?q=engineer&vjk=selected-123');
+    setBody(`
+      <h1 data-testid="jobsearch-JobInfoHeader-title">Software Engineer</h1>
+      <div data-testid="inlineHeader-companyName">Acme</div>
+      <div id="jobDescriptionText">Build reliable systems.</div>
+    `);
+
+    const { draft } = await extractJobDraft(INDEED);
+
+    expect(draft.external_job_id).toBe('selected-123');
+  });
 });
 
 describe('extractJobDraft — Glassdoor DOM extraction', () => {
