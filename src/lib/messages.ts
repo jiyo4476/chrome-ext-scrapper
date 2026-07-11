@@ -105,6 +105,11 @@ export const saveSettingsResponseSchema = z.object({
   settings: extensionSettingsSchema,
 });
 
+export const oauthSignInResponseSchema = z.object({
+  type: z.literal('OAUTH_SIGN_IN_RESULT'),
+  ok: z.literal(true),
+});
+
 export const testConnectionResponseSchema = z.object({
   type: z.literal('TEST_CONNECTION_RESULT'),
   ok: z.literal(true),
@@ -137,6 +142,7 @@ export const extensionResponseSchema = z.union([
   saveJobResponseSchema,
   getSettingsResponseSchema,
   saveSettingsResponseSchema,
+  oauthSignInResponseSchema,
   testConnectionResponseSchema,
   getAuthStatusResponseSchema,
   extensionErrorResponseSchema,

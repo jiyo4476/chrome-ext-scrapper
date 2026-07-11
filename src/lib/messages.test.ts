@@ -29,6 +29,15 @@ describe('extension message contracts', () => {
     ).toEqual({ type: 'TEST_CONNECTION_RESULT', ok: true });
   });
 
+  it('accepts the dedicated OAuth sign-in response', () => {
+    expect(
+      extensionResponseSchema.parse({
+        type: 'OAUTH_SIGN_IN_RESULT',
+        ok: true,
+      }),
+    ).toEqual({ type: 'OAUTH_SIGN_IN_RESULT', ok: true });
+  });
+
   it('does not default omitted OAuth tokens in settings updates', () => {
     expect(
       extensionMessageSchema.parse({

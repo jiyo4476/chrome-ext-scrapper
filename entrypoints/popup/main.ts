@@ -130,6 +130,10 @@ async function signIn(): Promise<void> {
       showAuthGate(response.error.message);
       return;
     }
+    if (response.type !== 'OAUTH_SIGN_IN_RESULT') {
+      showAuthGate('Could not confirm Authentik sign-in. Try again.');
+      return;
+    }
     showApp();
     await extractActiveTab();
   } catch {
@@ -147,6 +151,7 @@ function showAuthGate(message = 'Sign in to continue.'): void {
   if (authGateEl) authGateEl.hidden = false;
   setAuthStatus(message);
   setSignInDisabled(false);
+  signInButton?.focus();
 }
 
 function setAuthStatus(message: string): void {

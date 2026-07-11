@@ -56,8 +56,8 @@ export async function handleMessage(
 
   if (message.type === 'OAUTH_SIGN_IN') {
     try {
-      const settings = await signInWithAuthentik(await getSettings());
-      return { type: 'SAVE_SETTINGS_RESULT', ok: true, settings };
+      await signInWithAuthentik(await getSettings());
+      return { type: 'OAUTH_SIGN_IN_RESULT', ok: true };
     } catch (error) {
       return errorResponse(
         'OAUTH_FAILED',
