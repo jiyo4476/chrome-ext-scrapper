@@ -11,7 +11,10 @@ import {
   postScrapePayload,
   testAuthConnection,
 } from '../src/lib/apiClient';
-import { detectPlatform } from '../src/lib/extraction/detectPlatform';
+import {
+  detectPlatform,
+  isAutoScrapeUrl,
+} from '../src/lib/extraction/detectPlatform';
 import { extractJobDraft } from '../src/lib/extraction/jobDraftExtractor';
 import { getValidAccessToken, signInWithAuthentik } from '../src/lib/oauth';
 import { buildScrapePayload } from '../src/lib/payload';
@@ -116,6 +119,13 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {
     return errorResponse('TAB_NOT_FOUND', 'No active tab is available.');
+  }
+
+  if (!isAutoScrapeUrl(tab.url ?? '')) {
+    return errorResponse(
+      'DOMAIN_NOT_SUPPORTED',
+      'Open a LinkedIn, Indeed, Glassdoor, or Dice job page before scanning.',
+    );
   }
 
   const detection = detectPlatform(tab.url ?? '');

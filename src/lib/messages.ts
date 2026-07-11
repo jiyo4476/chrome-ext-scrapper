@@ -6,6 +6,7 @@ export const extensionErrorCodeSchema = z.enum([
   'MESSAGE_INVALID',
   'MESSAGE_UNHANDLED',
   'TAB_NOT_FOUND',
+  'DOMAIN_NOT_SUPPORTED',
   'EXTRACT_EMPTY',
   'EXTRACT_FAILED',
   'PAYLOAD_INVALID',

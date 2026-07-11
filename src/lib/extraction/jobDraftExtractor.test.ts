@@ -981,6 +981,39 @@ describe('extractJobDraft — Glassdoor DOM extraction', () => {
   });
 });
 
+describe('extractJobDraft — Dice DOM extraction', () => {
+  const DICE = { platform: 'dice' as const, confidence: 'high' as const };
+
+  it('extracts a Dice detail page within the matching job container', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/job-detail/123e4567-e89b-12d3-a456-426614174000',
+    );
+    document.body.innerHTML = `
+      <main>
+        <a href="/job-detail/123e4567-e89b-12d3-a456-426614174000">
+          <h1>Senior Software Engineer</h1>
+        </a>
+        <a href="/company-profile/acme">Acme Corp</a>
+        <p data-testid="job-location">Denver, Colorado</p>
+        <section data-testid="job-description">Build secure browser tooling.</section>
+      </main>
+    `;
+
+    const { draft } = await extractJobDraft(DICE);
+
+    expect(draft).toMatchObject({
+      source_platform: 'dice',
+      external_job_id: '123e4567-e89b-12d3-a456-426614174000',
+      company_name: 'Acme Corp',
+      job_title: 'Senior Software Engineer',
+      job_location: 'Denver, Colorado',
+      job_description: 'Build secure browser tooling.',
+    });
+  });
+});
+
 describe('extractJobDraft — Google Jobs DOM extraction', () => {
   const GOOGLE = { platform: 'google' as const, confidence: 'high' as const };
 

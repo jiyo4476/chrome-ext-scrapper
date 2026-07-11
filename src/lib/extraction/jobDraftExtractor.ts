@@ -472,6 +472,65 @@ export async function extractJobDraft(detection: {
     );
   }
 
+  async function extractDiceDom(): Promise<void> {
+    const currentPath = location.pathname.replace(/\/$/, '');
+    const detailLink = Array.from(
+      document.querySelectorAll<HTMLAnchorElement>('a[href*="/job-detail/"]'),
+    ).find((link) => {
+      try {
+        return (
+          new URL(link.href, location.href).pathname.replace(/\/$/, '') ===
+          currentPath
+        );
+      } catch {
+        return false;
+      }
+    });
+
+    const detailRoot =
+      detailLink?.closest('main, article, [role="main"], [role="article"]') ??
+      document.querySelector('main') ??
+      document.body;
+    const [titleEl, descriptionEl] = await waitForEach(
+      [
+        () =>
+          detailRoot.querySelector(
+            'h1, [data-testid="job-detail-title"], [data-cy="job-title"]',
+          ) ??
+          detailLink ??
+          undefined,
+        () =>
+          detailRoot.querySelector(
+            '[data-testid="job-description"], [data-cy="job-description"], article',
+          ) ?? undefined,
+      ],
+      800,
+    );
+
+    addCandidate('job_title', textOf(titleEl), 'dom', 'high');
+    addCandidate('job_description', textOf(descriptionEl), 'dom', 'high');
+    addCandidate(
+      'company_name',
+      textOf(
+        detailRoot.querySelector(
+          'a[href*="/company-profile/"], [data-testid="company-name"], [data-cy="company-name"]',
+        ),
+      ),
+      'dom',
+      'high',
+    );
+    addCandidate(
+      'job_location',
+      textOf(
+        detailRoot.querySelector(
+          '[data-testid="job-location"], [data-cy="location"], [class*="location"]',
+        ),
+      ),
+      'dom',
+      'medium',
+    );
+  }
+
   // LinkedIn's own <title> tag already spells out
   // "{Title} | {Company} | LinkedIn" (optionally prefixed with an
   // unread-notification badge like "(3) "). Parsing it is available the
@@ -954,6 +1013,7 @@ export async function extractJobDraft(detection: {
     linkedin: extractLinkedinDom,
     indeed: extractIndeedDom,
     glassdoor: extractGlassdoorDom,
+    dice: extractDiceDom,
     google: extractGoogleJobsDom,
   };
   await platformDomExtractors[detection.platform]?.();

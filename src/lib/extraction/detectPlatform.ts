@@ -11,6 +11,43 @@ function hostMatches(host: string, domain: string): boolean {
   return host === domain || host.endsWith(`.${domain}`);
 }
 
+export const AUTO_SCRAPE_DOMAINS = [
+  'linkedin.com',
+  'indeed.com',
+  'glassdoor.com',
+  'dice.com',
+] as const;
+
+export type AutoScrapePlatform = 'linkedin' | 'indeed' | 'glassdoor' | 'dice';
+
+export function isAutoScrapeUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+
+  if (parsed.protocol !== 'https:') return false;
+
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname.toLowerCase();
+
+  if (hostMatches(host, 'linkedin.com')) {
+    return path.startsWith('/jobs/view/') || path.startsWith('/jobs/search');
+  }
+  if (hostMatches(host, 'indeed.com')) {
+    return path === '/viewjob' || path === '/jobs';
+  }
+  if (hostMatches(host, 'glassdoor.com')) {
+    return path.includes('/job-listing/');
+  }
+  if (hostMatches(host, 'dice.com')) {
+    return path.startsWith('/job-detail/');
+  }
+  return false;
+}
+
 // Google serves the same job-search UI across many country TLDs. A regex
 // like /google\.[a-z.]+$/ would re-open the exact spoofing bug this module
 // exists to fix (it would also match e.g. "google.com.evil.example", since

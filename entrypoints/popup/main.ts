@@ -108,13 +108,32 @@ async function initializePopup(): Promise<void> {
       response.authenticated
     ) {
       showApp();
-      await extractActiveTab();
+      await autoExtractIfEnabled();
       return;
     }
     showAuthGate();
   } catch {
     showAuthGate('Could not verify your sign-in. Try again.');
   }
+}
+
+async function autoExtractIfEnabled(): Promise<void> {
+  const rawResponse: unknown = await browser.runtime.sendMessage({
+    type: 'GET_SETTINGS',
+  });
+  const response = extensionResponseSchema.parse(rawResponse);
+  if (
+    response.ok &&
+    response.type === 'GET_SETTINGS_RESULT' &&
+    response.settings.autoDetect
+  ) {
+    await extractActiveTab();
+    return;
+  }
+  setStatus(
+    'Open a supported job page, then select Scan active tab.',
+    'status',
+  );
 }
 
 async function signIn(): Promise<void> {
@@ -135,7 +154,7 @@ async function signIn(): Promise<void> {
       return;
     }
     showApp();
-    await extractActiveTab();
+    await autoExtractIfEnabled();
   } catch {
     showAuthGate('Could not complete Authentik sign-in. Try again.');
   }

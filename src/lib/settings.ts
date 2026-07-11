@@ -15,7 +15,7 @@ export const extensionSettingsSchema = z.object({
   oauthRefreshToken: z.string().default(''),
   oauthExpiresAt: z.number().default(0),
   apiKey: z.string().default(''),
-  autoDetect: z.boolean().default(false),
+  autoDetect: z.boolean().default(true),
 });
 
 export const extensionSettingsUpdateSchema = extensionSettingsSchema.partial();
