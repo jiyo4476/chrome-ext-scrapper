@@ -246,6 +246,11 @@ function renderCandidates(candidates: ExtractionCandidates | undefined): void {
     if (!container) return;
 
     container.innerHTML = '';
+    if (field === 'job_description') {
+      container.hidden = true;
+      return;
+    }
+
     const list = candidates?.[field];
     if (!list || list.length < 2) {
       container.hidden = true;

@@ -624,6 +624,32 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.job_location).toBe('New York City Metropolitan Area');
   });
 
+  it('extracts LinkedIn job_location from the first span in the metadata row instead of the remote chip', async () => {
+    setBody(`
+      <h1>Software Developer</h1>
+      <a href="https://www.linkedin.com/company/intelex-technologies-ulc/life/">Intelex Technologies ULC</a>
+      <div data-testid="lazy-column">
+        <p>
+          <a href="https://www.linkedin.com/jobs/view/4402229024/">Software Developer</a>
+        </p>
+        <p>
+          <span>United States</span>
+          <span> </span>·<span> </span>
+          <span><strong>Reposted 13 hours ago</strong></span>
+          <span> </span>·<span> </span>
+          <span>Over 100 people clicked apply</span>
+        </p>
+        <a href="/jobs/search-results/?keywords=remote"><span>Remote</span></a>
+        <a href="/jobs/search-results/?keywords=full-time"><span>Full-time</span></a>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_location).toBe('United States');
+  });
+
   it('resolves job_location after the detail column appears asynchronously', async () => {
     setBody('<h1>Senior Software Engineer</h1>');
 

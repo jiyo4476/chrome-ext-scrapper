@@ -541,6 +541,26 @@ export async function extractJobDraft(detection: {
     const lazyColumn = findLastLinkedinLazyColumn();
     if (!lazyColumn) return undefined;
 
+    for (const paragraph of Array.from(lazyColumn.querySelectorAll('p'))) {
+      const paragraphText = textOf(paragraph);
+      if (!paragraphText || !/[·|]/.test(paragraphText)) continue;
+      if (
+        !/\b(ago|applicant|apply|clicked|reposted|promoted|viewed)\b/i.test(
+          paragraphText,
+        )
+      ) {
+        continue;
+      }
+
+      const firstSpan = Array.from(paragraph.querySelectorAll('span')).find(
+        (span) => {
+          const text = textOf(span);
+          return text ? linkedinLocationScore(text) > 0 : false;
+        },
+      );
+      if (firstSpan) return firstSpan;
+    }
+
     const candidates = Array.from(lazyColumn.querySelectorAll('p, span'))
       .map((el, index) => {
         const text = textOf(el);
