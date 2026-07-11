@@ -90,6 +90,51 @@ describe('background save flow', () => {
     });
   });
 
+  it('signs out by clearing stored OAuth credentials', async () => {
+    browserMock.storage.local.get.mockResolvedValue({
+      'jobTracker.settings': {
+        oauthAccessToken: 'current-token',
+        oauthRefreshToken: 'refresh-token',
+        oauthExpiresAt: Date.now() + 300_000,
+      },
+    });
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    await expect(handleMessage({ type: 'OAUTH_SIGN_OUT' })).resolves.toEqual({
+      type: 'OAUTH_SIGN_OUT_RESULT',
+      ok: true,
+    });
+    expect(browserMock.storage.local.set).toHaveBeenCalled();
+    const stored: unknown = browserMock.storage.local.set.mock.calls[0]?.[0];
+    expect(stored).toMatchObject({
+      'jobTracker.settings': {
+        oauthAccessToken: '',
+        oauthRefreshToken: '',
+        oauthExpiresAt: 0,
+      },
+    });
+  });
+
+  it('returns only non-sensitive settings to extension pages', async () => {
+    browserMock.storage.local.get.mockResolvedValue({
+      'jobTracker.settings': {
+        oauthAccessToken: 'current-token',
+        oauthRefreshToken: 'refresh-token',
+        oauthExpiresAt: Date.now() + 300_000,
+      },
+    });
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    const response = await handleMessage({ type: 'GET_SETTINGS' });
+    expect(response).toEqual({
+      type: 'GET_SETTINGS_RESULT',
+      ok: true,
+      settings: { apiBaseUrl: 'http://localhost:3000', autoDetect: false },
+    });
+    expect(response).not.toHaveProperty('settings.oauthAccessToken');
+    expect(response).not.toHaveProperty('settings.oauthRefreshToken');
+  });
+
   it('detects the platform from the active tab URL and passes it to extraction', async () => {
     browserMock.tabs.query.mockResolvedValue([
       { id: 1, url: 'https://www.indeed.com/viewjob?jk=abc123' },

@@ -7,7 +7,6 @@ export default defineConfig({
     version: '0.1.0',
     permissions: ['activeTab', 'identity', 'scripting', 'storage'],
     host_permissions: ['http://localhost:3000/*', 'https://auth.yjimmy.dev/*'],
-    optional_host_permissions: ['http://*/*', 'https://*/*'],
     action: {
       default_title: 'Save job to Job Tracker',
     },

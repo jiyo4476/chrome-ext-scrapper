@@ -38,7 +38,7 @@ describe('extension message contracts', () => {
     ).toEqual({ type: 'OAUTH_SIGN_IN_RESULT', ok: true });
   });
 
-  it('does not default omitted OAuth tokens in settings updates', () => {
+  it('strips protected fields from public settings updates', () => {
     expect(
       extensionMessageSchema.parse({
         type: 'SAVE_SETTINGS',
@@ -53,13 +53,43 @@ describe('extension message contracts', () => {
     ).toEqual({
       type: 'SAVE_SETTINGS',
       settings: {
-        apiBaseUrl: 'http://localhost:3000',
-        authentikBaseUrl: 'https://auth.yjimmy.dev',
-        oauthClientId: 'job-tracker-extension',
-        oauthScope: 'openid profile email',
         autoDetect: false,
       },
     });
+  });
+
+  it('never returns OAuth credentials through public settings responses', () => {
+    expect(
+      extensionResponseSchema.parse({
+        type: 'GET_SETTINGS_RESULT',
+        ok: true,
+        settings: {
+          apiBaseUrl: 'http://localhost:3000',
+          autoDetect: false,
+          oauthAccessToken: 'secret-access-token',
+          oauthRefreshToken: 'secret-refresh-token',
+        },
+      }),
+    ).toEqual({
+      type: 'GET_SETTINGS_RESULT',
+      ok: true,
+      settings: {
+        apiBaseUrl: 'http://localhost:3000',
+        autoDetect: false,
+      },
+    });
+  });
+
+  it('accepts the dedicated OAuth sign-out contract', () => {
+    expect(extensionMessageSchema.parse({ type: 'OAUTH_SIGN_OUT' })).toEqual({
+      type: 'OAUTH_SIGN_OUT',
+    });
+    expect(
+      extensionResponseSchema.parse({
+        type: 'OAUTH_SIGN_OUT_RESULT',
+        ok: true,
+      }),
+    ).toEqual({ type: 'OAUTH_SIGN_OUT_RESULT', ok: true });
   });
 
   it('rejects unexpected message types at runtime boundaries', () => {

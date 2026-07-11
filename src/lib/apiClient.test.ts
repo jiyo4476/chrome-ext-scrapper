@@ -79,6 +79,40 @@ describe('postScrapePayload', () => {
       code: 'API_AUTH_FAILED',
     });
   });
+
+  it('rejects oversized API responses before parsing them', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response('{}', {
+            status: 200,
+            headers: { 'Content-Length': '1000001' },
+          }),
+        ),
+      ),
+    );
+
+    await expect(
+      postScrapePayload(
+        {
+          apiBaseUrl: 'http://localhost:3000',
+          authentikBaseUrl: 'https://auth.yjimmy.dev',
+          oauthClientId: 'job-tracker-extension',
+          oauthScope: 'openid profile email',
+          oauthAccessToken: 'oauth-token',
+          oauthRefreshToken: '',
+          oauthExpiresAt: Date.now() + 300_000,
+          apiKey: '',
+          autoDetect: false,
+        },
+        payload,
+      ),
+    ).rejects.toMatchObject({
+      code: 'API_UNEXPECTED_RESPONSE',
+      message: 'The Job Tracker API returned an oversized response.',
+    });
+  });
 });
 
 describe('testAuthConnection', () => {

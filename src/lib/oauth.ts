@@ -1,5 +1,9 @@
 import { browser } from 'wxt/browser';
-import { type ExtensionSettings, saveSettings } from './settings';
+import {
+  clearOAuthCredentials,
+  type ExtensionSettings,
+  saveSettings,
+} from './settings';
 
 interface TokenResponse {
   access_token?: unknown;
@@ -64,11 +68,16 @@ export async function getValidAccessToken(
     throw new Error('Sign in with Authentik before saving jobs.');
   }
 
-  const refreshed = await exchangeToken(settings, {
-    grant_type: 'refresh_token',
-    refresh_token: settings.oauthRefreshToken,
-  });
-  return refreshed.oauthAccessToken;
+  try {
+    const refreshed = await exchangeToken(settings, {
+      grant_type: 'refresh_token',
+      refresh_token: settings.oauthRefreshToken,
+    });
+    return refreshed.oauthAccessToken;
+  } catch (error) {
+    await clearOAuthCredentials();
+    throw error;
+  }
 }
 
 async function exchangeToken(

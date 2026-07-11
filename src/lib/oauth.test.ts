@@ -137,6 +137,24 @@ describe('Authentik OAuth helpers', () => {
     );
   });
 
+  it('clears stale credentials when refresh fails', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response('{}', { status: 401 }));
+
+    await expect(
+      getValidAccessToken({
+        ...baseSettings,
+        oauthAccessToken: 'expired-token',
+        oauthRefreshToken: 'stale-refresh-token',
+        oauthExpiresAt: Date.now() - 1,
+      }),
+    ).rejects.toThrow('Authentik token exchange failed with HTTP 401.');
+    expect(getSavedSettings()).toMatchObject({
+      oauthAccessToken: '',
+      oauthRefreshToken: '',
+      oauthExpiresAt: 0,
+    });
+  });
+
   it('rejects sign-in callbacks with a mismatched state', async () => {
     browserMock.identity.launchWebAuthFlow.mockResolvedValue(
       'https://extension.chromiumapp.org/?code=auth-code&state=wrong-state',

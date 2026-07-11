@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { scrapePayloadSchema, type ScrapePayload } from './schemas';
+import {
+  MAX_JOB_DESCRIPTION_LENGTH,
+  MAX_TAGS_PER_FIELD,
+  scrapePayloadSchema,
+  type ScrapePayload,
+} from './schemas';
 
 describe('scrape payload schema', () => {
   const basePayload: ScrapePayload = {
@@ -29,5 +34,20 @@ describe('scrape payload schema', () => {
       source_platform: 'google',
     });
     expect(result.source_platform).toBe('google');
+  });
+
+  it('rejects oversized page-controlled descriptions and tag arrays', () => {
+    expect(() =>
+      scrapePayloadSchema.parse({
+        ...basePayload,
+        job_description: 'x'.repeat(MAX_JOB_DESCRIPTION_LENGTH + 1),
+      }),
+    ).toThrow();
+    expect(() =>
+      scrapePayloadSchema.parse({
+        ...basePayload,
+        skills: Array.from({ length: MAX_TAGS_PER_FIELD + 1 }, () => 'x'),
+      }),
+    ).toThrow();
   });
 });
