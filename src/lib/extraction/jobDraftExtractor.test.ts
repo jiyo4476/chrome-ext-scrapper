@@ -498,8 +498,10 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     setBody(`
       <h1>Senior Software Engineer</h1>
       <a href="https://www.linkedin.com/company/acme-corp/life">Acme Corp</a>
-      <div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>
-      <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      <div data-testid="lazy-column">
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
     `);
 
     const { draft } = await extractJobDraft(LINKEDIN);
@@ -520,8 +522,7 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
       setBody(
         document.body.innerHTML +
           '<a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>' +
-          '<div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>' +
-          '<div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>',
+          '<div data-testid="lazy-column"><p><span>Austin, TX</span></p><div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div></div>',
       );
     }, 0);
 
@@ -547,13 +548,80 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
       <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
       <div data-testid="lazy-column">
         <p><span>Austin, TX</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
       </div>
-      <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
     `);
 
     const { draft } = await extractJobDraft(LINKEDIN);
 
     expect(draft.job_location).toBe('Austin, TX');
+  });
+
+  it('extracts LinkedIn job_location from the location paragraph instead of preceding metadata', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>Posted 2 weeks ago</span></p>
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_location).toBe('Austin, TX');
+  });
+
+  it('extracts LinkedIn job_location from the last lazy column', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>San Francisco Bay Area</span></p>
+      </div>
+      <div data-testid="lazy-column">
+        <p><span>Posted 2 weeks ago</span></p>
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_location).toBe('Austin, TX');
+  });
+
+  it('prefers the specific LinkedIn location when the paragraph above also looks location-like', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>San Francisco Bay Area</span></p>
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_location).toBe('Austin, TX');
+  });
+
+  it('extracts LinkedIn job_location for non-comma region formats', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>Over 100 applicants</span></p>
+        <p><span>New York City Metropolitan Area</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_location).toBe('New York City Metropolitan Area');
   });
 
   it('resolves job_location after the detail column appears asynchronously', async () => {
@@ -568,8 +636,7 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
       setBody(
         document.body.innerHTML +
           '<a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>' +
-          '<div data-testid="lazy-column"><p><span>Remote</span></p></div>' +
-          '<div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>',
+          '<div data-testid="lazy-column"><p><span>Remote</span></p><div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div></div>',
       );
     }, 0);
 
@@ -592,10 +659,12 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     setBody(`
       <h1>Senior Software Engineer</h1>
       <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
-      <div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>
-      <div class="jobs-description">
-        <h2>About the job</h2>
-        <p>Build great products for millions of members.</p>
+      <div data-testid="lazy-column">
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-description">
+          <h2>About the job</h2>
+          <p>Build great products for millions of members.</p>
+        </div>
       </div>
     `);
 
@@ -605,6 +674,104 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
       'Build great products for millions of members.',
     );
     expect(draft.job_description).not.toContain('About the job');
+  });
+
+  it('stops LinkedIn job_description before the next peer section heading', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-details">
+        <h2>About the job</h2>
+        <p>Build reliable product systems.</p>
+        <h3>Responsibilities</h3>
+        <p>Own backend services.</p>
+        <h2>About the company</h2>
+        <p>Acme was founded in 2005.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe(
+      'Build reliable product systems. Responsibilities Own backend services.',
+    );
+    expect(draft.job_description).not.toContain('About the company');
+    expect(draft.job_description).not.toContain('Acme was founded');
+  });
+
+  it('extracts LinkedIn job_description when the heading is wrapped separately from the body', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-details">
+          <div class="heading-wrapper"><h2>About the job</h2></div>
+          <div><p>Build reliable product systems.</p></div>
+          <h2>About the company</h2>
+          <p>Acme was founded in 2005.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe('Build reliable product systems.');
+  });
+
+  it('extracts LinkedIn job_description from a search split-view details pane only', async () => {
+    document.title = 'Software Engineer jobs in United States | LinkedIn';
+    setBody(`
+      <main>
+        <ul class="jobs-search-results-list">
+          <li>
+            <h3>Software Engineer</h3>
+            <p>Search result card teaser that should not be scraped.</p>
+          </li>
+        </ul>
+        <section class="jobs-search__job-details">
+          <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+          <div data-testid="lazy-column">
+            <p><span>San Francisco Bay Area</span></p>
+            <article class="jobs-description">
+              <h2>About the job</h2>
+              <p>Earlier lazy-column description that should not be scraped.</p>
+            </article>
+          </div>
+          <div data-testid="lazy-column">
+            <p><span>Austin, TX</span></p>
+            <article class="jobs-description">
+              <div><h2>About the job</h2></div>
+              <div>
+                <p>Build reliable product systems.</p>
+                <h3>What you will do</h3>
+                <p>Improve the selected job workflow.</p>
+              </div>
+              <h2>About the company</h2>
+              <p>Company profile text should not be scraped.</p>
+            </article>
+          </div>
+        </section>
+        <aside>
+          <h2>Similar jobs</h2>
+          <p>Another posting description that should not be scraped.</p>
+        </aside>
+      </main>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe(
+      'Build reliable product systems. What you will do Improve the selected job workflow.',
+    );
+    expect(draft.job_location).toBe('Austin, TX');
+    expect(draft.job_description).not.toContain('Search result card teaser');
+    expect(draft.job_description).not.toContain('Earlier lazy-column');
+    expect(draft.job_description).not.toContain('Company profile text');
+    expect(draft.job_description).not.toContain('Another posting description');
   });
 
   it('resolves job_description after the section appears asynchronously', async () => {
@@ -617,8 +784,10 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     const pending = extractJobDraft(LINKEDIN);
     setTimeout(() => {
       setBody(
-        document.body.innerHTML +
-          '<div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>',
+        document.body.innerHTML.replace(
+          '</div>',
+          '<div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div></div>',
+        ),
       );
     }, 0);
 

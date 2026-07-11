@@ -492,25 +492,130 @@ export async function extractJobDraft(detection: {
     };
   }
 
-  function findAboutTheJobSection(): Element | undefined {
-    const heading = Array.from(document.querySelectorAll('h2')).find((h) =>
-      textOf(h)?.toLowerCase().includes('about the job'),
-    );
-    return heading?.parentElement ?? undefined;
+  function findLastLinkedinLazyColumn(): Element | undefined {
+    return Array.from(
+      document.querySelectorAll('[data-testid="lazy-column"]'),
+    ).at(-1);
   }
 
-  // The matched parent contains the "About the job" heading itself as a
-  // child alongside the actual description text -- strip the heading out of
-  // a clone before reading textContent so it doesn't leak into the front of
-  // the extracted description.
-  function descriptionTextExcludingHeading(
-    section: Element,
-  ): string | undefined {
-    const clone = section.cloneNode(true) as Element;
-    clone.querySelectorAll('h2').forEach((h) => {
-      h.remove();
-    });
-    return textOf(clone);
+  function findAboutTheJobHeading(): Element | undefined {
+    const root = findLastLinkedinLazyColumn() ?? document;
+    const heading = Array.from(root.querySelectorAll('h2')).find((h) =>
+      textOf(h)?.toLowerCase().includes('about the job'),
+    );
+    return heading ?? undefined;
+  }
+
+  function linkedinLocationScore(text: string): number {
+    const normalized = text.toLowerCase();
+    if (
+      /\b(ago|applicant|reposted|promoted|viewed|connections?)\b/.test(
+        normalized,
+      )
+    ) {
+      return 0;
+    }
+
+    let score = 0;
+    if (
+      /^(united states|canada|north america|european union|united kingdom)$/i.test(
+        text,
+      )
+    ) {
+      score = 2;
+    }
+    if (/\b(remote|hybrid|on-site|onsite)\b/.test(normalized)) score = 3;
+    if (/\b(area|region|district|metro|metropolitan)\b/.test(normalized)) {
+      score = 4;
+    }
+    if (/^[A-Z][A-Za-z .'-]+,\s*[A-Z][A-Za-z .'-]+\b/.test(text)) {
+      score = 5;
+    }
+    if (/^[A-Z][A-Za-z .'-]+,\s*[A-Z]{2}\b/.test(text)) score = 6;
+    if (/[·|]/.test(text)) score -= 2;
+    if (text.length > 120) score -= 2;
+    return Math.max(score, 0);
+  }
+
+  function findLinkedinLocation(): Element | undefined {
+    const lazyColumn = findLastLinkedinLazyColumn();
+    if (!lazyColumn) return undefined;
+
+    const candidates = Array.from(lazyColumn.querySelectorAll('p, span'))
+      .map((el, index) => {
+        const text = textOf(el);
+        return {
+          el,
+          index,
+          score: text ? linkedinLocationScore(text) : 0,
+        };
+      })
+      .filter((candidate) => candidate.score > 0);
+
+    candidates.sort((a, b) => b.score - a.score || b.index - a.index);
+    return candidates[0]?.el;
+  }
+
+  function headingLevel(el: Element): number | undefined {
+    const match = /^H([1-6])$/.exec(el.tagName);
+    return match?.[1] ? Number(match[1]) : undefined;
+  }
+
+  // LinkedIn can render the "About the job" heading inside a broad details
+  // container that also includes adjacent sections. Read text after the
+  // heading in document order, stopping at the next same-or-higher-level
+  // heading, so neighboring sections do not leak into job_description.
+  function descriptionTextAfterHeading(heading: Element): string | undefined {
+    const startLevel = headingLevel(heading) ?? 2;
+    for (
+      let boundary = heading.parentElement;
+      boundary && boundary !== document.body.parentElement;
+      boundary = boundary.parentElement
+    ) {
+      const parts: string[] = [];
+      let afterHeading = false;
+      let stopped = false;
+      const walker = document.createTreeWalker(
+        boundary,
+        NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+        {
+          acceptNode(node) {
+            if (stopped) return NodeFilter.FILTER_REJECT;
+            if (node === heading) {
+              afterHeading = true;
+              return NodeFilter.FILTER_REJECT;
+            }
+            if (!afterHeading) {
+              return node.nodeType === Node.ELEMENT_NODE
+                ? NodeFilter.FILTER_SKIP
+                : NodeFilter.FILTER_REJECT;
+            }
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              const level = headingLevel(node as Element);
+              if (level !== undefined && level <= startLevel) {
+                stopped = true;
+                return NodeFilter.FILTER_REJECT;
+              }
+              return NodeFilter.FILTER_SKIP;
+            }
+            return node.textContent?.trim()
+              ? NodeFilter.FILTER_ACCEPT
+              : NodeFilter.FILTER_REJECT;
+          },
+        },
+      );
+
+      while (walker.nextNode()) {
+        const text = walker.currentNode.textContent
+          ?.replace(/\s+/g, ' ')
+          .trim();
+        if (text) parts.push(text);
+      }
+
+      const text = parts.join(' ').replace(/\s+/g, ' ').trim();
+      if (text) return text;
+    }
+    return undefined;
   }
 
   async function extractLinkedinDom(): Promise<void> {
@@ -532,8 +637,8 @@ export async function extractJobDraft(detection: {
     const [companyEl, locationEl, descriptionEl] = await waitForEach(
       [
         bySelector(['a[href^="https://www.linkedin.com/company/"]']),
-        bySelector(['[data-testid="lazy-column"] p span']),
-        findAboutTheJobSection,
+        findLinkedinLocation,
+        findAboutTheJobHeading,
       ],
       800,
     );
@@ -541,9 +646,7 @@ export async function extractJobDraft(detection: {
     addCandidate('job_location', textOf(locationEl), 'dom', 'medium');
     addCandidate(
       'job_description',
-      descriptionEl
-        ? descriptionTextExcludingHeading(descriptionEl)
-        : undefined,
+      descriptionEl ? descriptionTextAfterHeading(descriptionEl) : undefined,
       'dom',
       'high',
     );
