@@ -23,6 +23,7 @@ const DESCRIPTION_TAGS = [
   'h5',
   'h6',
   'i',
+  'img',
   'li',
   'ol',
   'p',
@@ -44,7 +45,7 @@ function normalizeMarkdown(markdown: string): string {
 function htmlToSafeMarkdown(html: string): string {
   const sanitized = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: DESCRIPTION_TAGS,
-    ALLOWED_ATTR: ['href'],
+    ALLOWED_ATTR: ['href', 'alt'],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
     KEEP_CONTENT: false,
@@ -92,6 +93,17 @@ function htmlToSafeMarkdown(html: string): string {
       const body = trimmed + (isParagraph ? '\n' : '');
       const indented = body.replace(/\n/gm, `\n${' '.repeat(prefix.length)}`);
       return prefix + indented + (node.nextSibling ? '\n' : '');
+    },
+  });
+
+  // `src` is never in ALLOWED_ATTR above, so an <img> only ever carries alt
+  // text here -- surface that as plain text instead of Turndown's default
+  // `![alt](src)` rule, which drops the alt text entirely when there's no src.
+  turndown.addRule('image', {
+    filter: 'img',
+    replacement(_content, node) {
+      const alt = (node as Element).getAttribute('alt')?.trim();
+      return alt ? turndown.escape(alt) : '';
     },
   });
 

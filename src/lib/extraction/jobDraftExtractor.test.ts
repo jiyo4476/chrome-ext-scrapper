@@ -102,6 +102,24 @@ describe('extractJobDraft — JSON-LD source', () => {
     expect(draft.job_description).not.toContain('<script>');
   });
 
+  it('preserves image alt text as plain text without leaking the src', async () => {
+    const jsonLd = document.createElement('script');
+    jsonLd.type = 'application/ld+json';
+    jsonLd.textContent = JSON.stringify({
+      '@type': 'JobPosting',
+      title: 'Support Engineer',
+      description:
+        '<p><img src="https://evil.example/track.png" alt="Team org chart" onerror="alert(1)"></p>',
+    });
+    document.head.append(jsonLd);
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_description).toBe('Team org chart');
+    expect(draft.job_description).not.toContain('evil.example');
+    expect(draft.job_description).not.toContain('alert');
+  });
+
   it('preserves a <br> as a Markdown hard line break', async () => {
     const jsonLd = document.createElement('script');
     jsonLd.type = 'application/ld+json';
@@ -1007,7 +1025,7 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
     const { draft } = await extractJobDraft(INDEED);
 
     expect(draft.job_description).toBe(
-      '## Requirements\n\n- **TypeScript**\n- SQL',
+      '## Requirements\n\n- **TypeScript**\n- SQL\n\ntracking pixel',
     );
     expect(draft.job_description).not.toContain('alert');
     expect(draft.job_description).not.toContain('onerror');
