@@ -3,8 +3,6 @@ import '../styles.css';
 import {
   DEFAULT_API_BASE_URL,
   DEFAULT_AUTHENTIK_BASE_URL,
-  DEFAULT_OAUTH_CLIENT_ID,
-  DEFAULT_OAUTH_SCOPE,
   type ExtensionSettings,
 } from '../../src/lib/settings';
 import { extensionResponseSchema } from '../../src/lib/messages';
@@ -17,6 +15,7 @@ const signInButton =
   document.querySelector<HTMLButtonElement>('#oauth-sign-in');
 const testConnectionButton =
   document.querySelector<HTMLButtonElement>('#test-connection');
+let currentSettings: ExtensionSettings | null = null;
 
 void loadSettings();
 
@@ -46,16 +45,8 @@ async function loadSettings(): Promise<void> {
   }
 
   const settings = response.settings;
+  currentSettings = settings;
   setInputValue('#api-base-url', settings.apiBaseUrl || DEFAULT_API_BASE_URL);
-  setInputValue(
-    '#authentik-base-url',
-    settings.authentikBaseUrl || DEFAULT_AUTHENTIK_BASE_URL,
-  );
-  setInputValue(
-    '#oauth-client-id',
-    settings.oauthClientId || DEFAULT_OAUTH_CLIENT_ID,
-  );
-  setInputValue('#oauth-scope', settings.oauthScope || DEFAULT_OAUTH_SCOPE);
   setChecked('#auto-detect', settings.autoDetect);
   if (settings.oauthAccessToken) setStatus('Signed in with Authentik.');
 }
@@ -65,7 +56,7 @@ async function persistSettings(
 ): Promise<ExtensionSettings | null> {
   const apiBaseUrl = getInputValue('#api-base-url') || DEFAULT_API_BASE_URL;
   const authentikBaseUrl =
-    getInputValue('#authentik-base-url') || DEFAULT_AUTHENTIK_BASE_URL;
+    currentSettings?.authentikBaseUrl || DEFAULT_AUTHENTIK_BASE_URL;
   const permissionGranted = await ensureHostPermissions([
     apiBaseUrl,
     authentikBaseUrl,
@@ -79,10 +70,6 @@ async function persistSettings(
     type: 'SAVE_SETTINGS',
     settings: {
       apiBaseUrl,
-      authentikBaseUrl,
-      oauthClientId:
-        getInputValue('#oauth-client-id') || DEFAULT_OAUTH_CLIENT_ID,
-      oauthScope: getInputValue('#oauth-scope') || DEFAULT_OAUTH_SCOPE,
       autoDetect: getChecked('#auto-detect'),
     },
   });
@@ -98,6 +85,7 @@ async function persistSettings(
   setStatus(
     savedMessage ?? `Saved settings for ${response.settings.apiBaseUrl}.`,
   );
+  currentSettings = response.settings;
   return response.settings;
 }
 
