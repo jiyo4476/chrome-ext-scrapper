@@ -67,6 +67,23 @@ export async function handleMessage(
     }
   }
 
+  if (message.type === 'GET_AUTH_STATUS') {
+    try {
+      await getValidAccessToken(await getSettings());
+      return {
+        type: 'GET_AUTH_STATUS_RESULT',
+        ok: true,
+        authenticated: true,
+      };
+    } catch {
+      return {
+        type: 'GET_AUTH_STATUS_RESULT',
+        ok: true,
+        authenticated: false,
+      };
+    }
+  }
+
   if (message.type === 'TEST_CONNECTION') {
     return testConnection();
   }

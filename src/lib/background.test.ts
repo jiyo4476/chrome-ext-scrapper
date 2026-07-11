@@ -64,6 +64,32 @@ describe('background save flow', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('reports an unauthenticated status before sign-in', async () => {
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    await expect(handleMessage({ type: 'GET_AUTH_STATUS' })).resolves.toEqual({
+      type: 'GET_AUTH_STATUS_RESULT',
+      ok: true,
+      authenticated: false,
+    });
+  });
+
+  it('reports an authenticated status for a current access token', async () => {
+    browserMock.storage.local.get.mockResolvedValue({
+      'jobTracker.settings': {
+        oauthAccessToken: 'current-token',
+        oauthExpiresAt: Date.now() + 300_000,
+      },
+    });
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    await expect(handleMessage({ type: 'GET_AUTH_STATUS' })).resolves.toEqual({
+      type: 'GET_AUTH_STATUS_RESULT',
+      ok: true,
+      authenticated: true,
+    });
+  });
+
   it('detects the platform from the active tab URL and passes it to extraction', async () => {
     browserMock.tabs.query.mockResolvedValue([
       { id: 1, url: 'https://www.indeed.com/viewjob?jk=abc123' },

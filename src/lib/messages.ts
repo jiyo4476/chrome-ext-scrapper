@@ -50,6 +50,10 @@ export const oauthSignInRequestSchema = z.object({
   type: z.literal('OAUTH_SIGN_IN'),
 });
 
+export const getAuthStatusRequestSchema = z.object({
+  type: z.literal('GET_AUTH_STATUS'),
+});
+
 export const testConnectionRequestSchema = z.object({
   type: z.literal('TEST_CONNECTION'),
 });
@@ -106,6 +110,12 @@ export const testConnectionResponseSchema = z.object({
   ok: z.literal(true),
 });
 
+export const getAuthStatusResponseSchema = z.object({
+  type: z.literal('GET_AUTH_STATUS_RESULT'),
+  ok: z.literal(true),
+  authenticated: z.boolean(),
+});
+
 export const extensionErrorResponseSchema = z.object({
   type: z.literal('ERROR'),
   ok: z.literal(false),
@@ -118,6 +128,7 @@ export const extensionMessageSchema = z.discriminatedUnion('type', [
   getSettingsRequestSchema,
   saveSettingsRequestSchema,
   oauthSignInRequestSchema,
+  getAuthStatusRequestSchema,
   testConnectionRequestSchema,
 ]);
 
@@ -127,6 +138,7 @@ export const extensionResponseSchema = z.union([
   getSettingsResponseSchema,
   saveSettingsResponseSchema,
   testConnectionResponseSchema,
+  getAuthStatusResponseSchema,
   extensionErrorResponseSchema,
 ]);
 

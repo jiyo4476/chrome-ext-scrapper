@@ -13,312 +13,320 @@
         <a href="/options.html" target="_blank" rel="noreferrer">Settings</a>
       </header>
 
-      <div id="status" role="status">Scanning the active tab&hellip;</div>
-      <a
-        id="status-action"
-        href="/options.html"
-        target="_blank"
-        rel="noreferrer"
-        hidden
-        >Open Settings to sign in</a
-      >
-
-      <form id="job-form">
-        <div class="top-actions">
-          <button id="extract-button" type="button">Re-extract</button>
-          <label class="row" for="is-remote">
-            <input id="is-remote" name="is_remote" type="checkbox" />
-            Remote
-          </label>
+      <section id="auth-gate" class="auth-gate" aria-labelledby="auth-title">
+        <h2 id="auth-title">Sign in required</h2>
+        <p>Sign in with Authentik to use Job Tracker Capture.</p>
+        <button id="sign-in-button" type="button">Sign in</button>
+        <div id="auth-status" role="status">
+          Checking sign-in status&hellip;
         </div>
+      </section>
 
-        <label for="job-title">
-          Title
-          <input id="job-title" name="job_title" autocomplete="off" />
-        </label>
-        <div
-          class="candidate-picker"
-          id="candidates-job_title"
-          role="radiogroup"
-          aria-label="Alternative values for Title"
-          hidden
-        ></div>
+      <div id="app-content" hidden>
+        <div id="status" role="status">Scanning the active tab&hellip;</div>
 
-        <label for="company-name">
-          Company
-          <input
-            id="company-name"
-            name="company_name"
-            autocomplete="organization"
-          />
-        </label>
-        <div
-          class="candidate-picker"
-          id="candidates-company_name"
-          role="radiogroup"
-          aria-label="Alternative values for Company"
-          hidden
-        ></div>
-
-        <label for="job-link">
-          Link
-          <input
-            id="job-link"
-            name="job_link"
-            type="url"
-            autocomplete="url"
-            aria-describedby="error-job_link"
-          />
-        </label>
-        <div class="field-error" id="error-job_link" role="alert" hidden></div>
-        <div
-          class="candidate-picker"
-          id="candidates-job_link"
-          role="radiogroup"
-          aria-label="Alternative values for Link"
-          hidden
-        ></div>
-
-        <label for="source-platform">
-          Platform
-          <select id="source-platform" name="source_platform">
-            <option value="linkedin">LinkedIn</option>
-            <option value="indeed">Indeed</option>
-            <option value="glassdoor">Glassdoor</option>
-            <option value="dice">Dice</option>
-            <option value="lever">Lever</option>
-            <option value="greenhouse">Greenhouse</option>
-            <option value="workday">Workday</option>
-            <option value="angellist">AngelList / Wellfound</option>
-            <option value="direct">Direct / company site</option>
-            <option value="google">Google Jobs</option>
-            <option value="other" selected>Other</option>
-          </select>
-        </label>
-        <div
-          class="candidate-picker"
-          id="candidates-source_platform"
-          role="radiogroup"
-          aria-label="Alternative values for Platform"
-          hidden
-        ></div>
-
-        <label for="job-location">
-          Location
-          <input id="job-location" name="job_location" autocomplete="off" />
-        </label>
-        <div
-          class="candidate-picker"
-          id="candidates-job_location"
-          role="radiogroup"
-          aria-label="Alternative values for Location"
-          hidden
-        ></div>
-
-        <label for="job-description">
-          Description
-          <textarea
-            id="job-description"
-            name="job_description"
-            rows="5"
-          ></textarea>
-        </label>
-        <div
-          class="candidate-picker"
-          id="candidates-job_description"
-          role="radiogroup"
-          aria-label="Alternative values for Description"
-          hidden
-        ></div>
-
-        <details id="advanced-fields">
-          <summary>Advanced fields</summary>
-          <div class="settings-section">
-            <label for="external-job-id">
-              External ID
-              <input
-                id="external-job-id"
-                name="external_job_id"
-                autocomplete="off"
-              />
-            </label>
-            <div
-              class="candidate-picker"
-              id="candidates-external_job_id"
-              role="radiogroup"
-              aria-label="Alternative values for External ID"
-              hidden
-            ></div>
-
-            <label for="date-posted">
-              Date posted
-              <input id="date-posted" name="date_posted" type="date" />
-            </label>
-            <div
-              class="candidate-picker"
-              id="candidates-date_posted"
-              role="radiogroup"
-              aria-label="Alternative values for Date posted"
-              hidden
-            ></div>
-
-            <label for="job-type">
-              Job type
-              <select id="job-type" name="job_type">
-                <option value="" selected>Not specified</option>
-                <option value="full_time">Full time</option>
-                <option value="part_time">Part time</option>
-                <option value="contract">Contract</option>
-                <option value="internship">Internship</option>
-                <option value="temp">Temp</option>
-                <option value="freelance">Freelance</option>
-              </select>
-            </label>
-
-            <label for="experience-level">
-              Experience level
-              <select id="experience-level" name="experience_level">
-                <option value="" selected>Not specified</option>
-                <option value="entry">Entry</option>
-                <option value="mid">Mid</option>
-                <option value="senior">Senior</option>
-                <option value="lead">Lead</option>
-                <option value="executive">Executive</option>
-              </select>
-            </label>
-
-            <label class="row" for="security-clearance-req">
-              <input
-                id="security-clearance-req"
-                name="security_clearance_req"
-                type="checkbox"
-              />
-              Security clearance required
-            </label>
-
-            <label for="salary-type">
-              Salary type
-              <select id="salary-type" name="salary_type">
-                <option value="" selected>Not specified</option>
-                <option value="annual">Annual</option>
-                <option value="hourly">Hourly</option>
-              </select>
-            </label>
-
-            <label for="salary-min">
-              Minimum salary (cents)
-              <input
-                id="salary-min"
-                name="salary_min"
-                type="number"
-                min="0"
-                step="1"
-                inputmode="numeric"
-                aria-describedby="error-salary_min"
-              />
-            </label>
-            <div
-              class="field-error"
-              id="error-salary_min"
-              role="alert"
-              hidden
-            ></div>
-
-            <label for="salary-max">
-              Maximum salary (cents)
-              <input
-                id="salary-max"
-                name="salary_max"
-                type="number"
-                min="0"
-                step="1"
-                inputmode="numeric"
-                aria-describedby="error-salary_max"
-              />
-            </label>
-            <div
-              class="field-error"
-              id="error-salary_max"
-              role="alert"
-              hidden
-            ></div>
-
-            <label for="hourly-rate-min">
-              Minimum hourly rate
-              <input
-                id="hourly-rate-min"
-                name="hourly_rate_min"
-                type="number"
-                min="0"
-                step="0.01"
-                inputmode="decimal"
-                aria-describedby="error-hourly_rate_min"
-              />
-            </label>
-            <div
-              class="field-error"
-              id="error-hourly_rate_min"
-              role="alert"
-              hidden
-            ></div>
-
-            <label for="hourly-rate-max">
-              Maximum hourly rate
-              <input
-                id="hourly-rate-max"
-                name="hourly_rate_max"
-                type="number"
-                min="0"
-                step="0.01"
-                inputmode="decimal"
-                aria-describedby="error-hourly_rate_max"
-              />
-            </label>
-            <div
-              class="field-error"
-              id="error-hourly_rate_max"
-              role="alert"
-              hidden
-            ></div>
-
-            <label for="salary-text">
-              Salary notes
-              <input id="salary-text" name="salary_text" autocomplete="off" />
-            </label>
-
-            <label for="skills">
-              Skills (comma-separated)
-              <input id="skills" name="skills" autocomplete="off" />
-            </label>
-
-            <label for="software">
-              Software (comma-separated)
-              <input id="software" name="software" autocomplete="off" />
-            </label>
-
-            <label for="keywords">
-              Keywords (comma-separated)
-              <input id="keywords" name="keywords" autocomplete="off" />
-            </label>
-
-            <label for="certifications">
-              Certifications (comma-separated)
-              <input
-                id="certifications"
-                name="certifications"
-                autocomplete="off"
-              />
+        <form id="job-form">
+          <div class="top-actions">
+            <button id="extract-button" type="button">Re-extract</button>
+            <label class="row" for="is-remote">
+              <input id="is-remote" name="is_remote" type="checkbox" />
+              Remote
             </label>
           </div>
-        </details>
-      </form>
 
-      <footer>
-        <div class="row">
-          <button id="export-button" type="button">Export JSON-LD</button>
-          <button id="save-button" type="button">Save Job</button>
-        </div>
-      </footer>
+          <label for="job-title">
+            Title
+            <input id="job-title" name="job_title" autocomplete="off" />
+          </label>
+          <div
+            class="candidate-picker"
+            id="candidates-job_title"
+            role="radiogroup"
+            aria-label="Alternative values for Title"
+            hidden
+          ></div>
+
+          <label for="company-name">
+            Company
+            <input
+              id="company-name"
+              name="company_name"
+              autocomplete="organization"
+            />
+          </label>
+          <div
+            class="candidate-picker"
+            id="candidates-company_name"
+            role="radiogroup"
+            aria-label="Alternative values for Company"
+            hidden
+          ></div>
+
+          <label for="job-link">
+            Link
+            <input
+              id="job-link"
+              name="job_link"
+              type="url"
+              autocomplete="url"
+              aria-describedby="error-job_link"
+            />
+          </label>
+          <div
+            class="field-error"
+            id="error-job_link"
+            role="alert"
+            hidden
+          ></div>
+          <div
+            class="candidate-picker"
+            id="candidates-job_link"
+            role="radiogroup"
+            aria-label="Alternative values for Link"
+            hidden
+          ></div>
+
+          <label for="source-platform">
+            Platform
+            <select id="source-platform" name="source_platform">
+              <option value="linkedin">LinkedIn</option>
+              <option value="indeed">Indeed</option>
+              <option value="glassdoor">Glassdoor</option>
+              <option value="dice">Dice</option>
+              <option value="lever">Lever</option>
+              <option value="greenhouse">Greenhouse</option>
+              <option value="workday">Workday</option>
+              <option value="angellist">AngelList / Wellfound</option>
+              <option value="direct">Direct / company site</option>
+              <option value="google">Google Jobs</option>
+              <option value="other" selected>Other</option>
+            </select>
+          </label>
+          <div
+            class="candidate-picker"
+            id="candidates-source_platform"
+            role="radiogroup"
+            aria-label="Alternative values for Platform"
+            hidden
+          ></div>
+
+          <label for="job-location">
+            Location
+            <input id="job-location" name="job_location" autocomplete="off" />
+          </label>
+          <div
+            class="candidate-picker"
+            id="candidates-job_location"
+            role="radiogroup"
+            aria-label="Alternative values for Location"
+            hidden
+          ></div>
+
+          <label for="job-description">
+            Description
+            <textarea
+              id="job-description"
+              name="job_description"
+              rows="5"
+            ></textarea>
+          </label>
+          <div
+            class="candidate-picker"
+            id="candidates-job_description"
+            role="radiogroup"
+            aria-label="Alternative values for Description"
+            hidden
+          ></div>
+
+          <details id="advanced-fields">
+            <summary>Advanced fields</summary>
+            <div class="settings-section">
+              <label for="external-job-id">
+                External ID
+                <input
+                  id="external-job-id"
+                  name="external_job_id"
+                  autocomplete="off"
+                />
+              </label>
+              <div
+                class="candidate-picker"
+                id="candidates-external_job_id"
+                role="radiogroup"
+                aria-label="Alternative values for External ID"
+                hidden
+              ></div>
+
+              <label for="date-posted">
+                Date posted
+                <input id="date-posted" name="date_posted" type="date" />
+              </label>
+              <div
+                class="candidate-picker"
+                id="candidates-date_posted"
+                role="radiogroup"
+                aria-label="Alternative values for Date posted"
+                hidden
+              ></div>
+
+              <label for="job-type">
+                Job type
+                <select id="job-type" name="job_type">
+                  <option value="" selected>Not specified</option>
+                  <option value="full_time">Full time</option>
+                  <option value="part_time">Part time</option>
+                  <option value="contract">Contract</option>
+                  <option value="internship">Internship</option>
+                  <option value="temp">Temp</option>
+                  <option value="freelance">Freelance</option>
+                </select>
+              </label>
+
+              <label for="experience-level">
+                Experience level
+                <select id="experience-level" name="experience_level">
+                  <option value="" selected>Not specified</option>
+                  <option value="entry">Entry</option>
+                  <option value="mid">Mid</option>
+                  <option value="senior">Senior</option>
+                  <option value="lead">Lead</option>
+                  <option value="executive">Executive</option>
+                </select>
+              </label>
+
+              <label class="row" for="security-clearance-req">
+                <input
+                  id="security-clearance-req"
+                  name="security_clearance_req"
+                  type="checkbox"
+                />
+                Security clearance required
+              </label>
+
+              <label for="salary-type">
+                Salary type
+                <select id="salary-type" name="salary_type">
+                  <option value="" selected>Not specified</option>
+                  <option value="annual">Annual</option>
+                  <option value="hourly">Hourly</option>
+                </select>
+              </label>
+
+              <label for="salary-min">
+                Minimum salary (cents)
+                <input
+                  id="salary-min"
+                  name="salary_min"
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputmode="numeric"
+                  aria-describedby="error-salary_min"
+                />
+              </label>
+              <div
+                class="field-error"
+                id="error-salary_min"
+                role="alert"
+                hidden
+              ></div>
+
+              <label for="salary-max">
+                Maximum salary (cents)
+                <input
+                  id="salary-max"
+                  name="salary_max"
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputmode="numeric"
+                  aria-describedby="error-salary_max"
+                />
+              </label>
+              <div
+                class="field-error"
+                id="error-salary_max"
+                role="alert"
+                hidden
+              ></div>
+
+              <label for="hourly-rate-min">
+                Minimum hourly rate
+                <input
+                  id="hourly-rate-min"
+                  name="hourly_rate_min"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputmode="decimal"
+                  aria-describedby="error-hourly_rate_min"
+                />
+              </label>
+              <div
+                class="field-error"
+                id="error-hourly_rate_min"
+                role="alert"
+                hidden
+              ></div>
+
+              <label for="hourly-rate-max">
+                Maximum hourly rate
+                <input
+                  id="hourly-rate-max"
+                  name="hourly_rate_max"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputmode="decimal"
+                  aria-describedby="error-hourly_rate_max"
+                />
+              </label>
+              <div
+                class="field-error"
+                id="error-hourly_rate_max"
+                role="alert"
+                hidden
+              ></div>
+
+              <label for="salary-text">
+                Salary notes
+                <input id="salary-text" name="salary_text" autocomplete="off" />
+              </label>
+
+              <label for="skills">
+                Skills (comma-separated)
+                <input id="skills" name="skills" autocomplete="off" />
+              </label>
+
+              <label for="software">
+                Software (comma-separated)
+                <input id="software" name="software" autocomplete="off" />
+              </label>
+
+              <label for="keywords">
+                Keywords (comma-separated)
+                <input id="keywords" name="keywords" autocomplete="off" />
+              </label>
+
+              <label for="certifications">
+                Certifications (comma-separated)
+                <input
+                  id="certifications"
+                  name="certifications"
+                  autocomplete="off"
+                />
+              </label>
+            </div>
+          </details>
+        </form>
+
+        <footer>
+          <div class="row">
+            <button id="export-button" type="button">Export JSON-LD</button>
+            <button id="save-button" type="button">Save Job</button>
+          </div>
+        </footer>
+      </div>
     </main>
   </body>
 </html>

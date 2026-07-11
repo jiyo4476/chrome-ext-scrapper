@@ -61,8 +61,11 @@ const ERROR_FIELDS: DraftFormField[] = [
 ];
 
 const statusEl = document.querySelector<HTMLDivElement>('#status');
-const statusActionEl =
-  document.querySelector<HTMLAnchorElement>('#status-action');
+const authGateEl = document.querySelector<HTMLElement>('#auth-gate');
+const authStatusEl = document.querySelector<HTMLDivElement>('#auth-status');
+const appContentEl = document.querySelector<HTMLDivElement>('#app-content');
+const signInButton =
+  document.querySelector<HTMLButtonElement>('#sign-in-button');
 const form = document.querySelector<HTMLFormElement>('#job-form');
 const extractButton =
   document.querySelector<HTMLButtonElement>('#extract-button');
@@ -84,12 +87,79 @@ saveButton?.addEventListener('click', () => {
   void saveJob();
 });
 
-void extractActiveTab();
+signInButton?.addEventListener('click', () => {
+  void signIn();
+});
+
+void initializePopup();
+
+async function initializePopup(): Promise<void> {
+  setAuthStatus('Checking sign-in status…');
+  setSignInDisabled(true);
+
+  try {
+    const rawResponse: unknown = await browser.runtime.sendMessage({
+      type: 'GET_AUTH_STATUS',
+    });
+    const response = extensionResponseSchema.parse(rawResponse);
+    if (
+      response.ok &&
+      response.type === 'GET_AUTH_STATUS_RESULT' &&
+      response.authenticated
+    ) {
+      showApp();
+      await extractActiveTab();
+      return;
+    }
+    showAuthGate();
+  } catch {
+    showAuthGate('Could not verify your sign-in. Try again.');
+  }
+}
+
+async function signIn(): Promise<void> {
+  setAuthStatus('Opening Authentik sign-in…');
+  setSignInDisabled(true);
+
+  try {
+    const rawResponse: unknown = await browser.runtime.sendMessage({
+      type: 'OAUTH_SIGN_IN',
+    });
+    const response = extensionResponseSchema.parse(rawResponse);
+    if (!response.ok) {
+      showAuthGate(response.error.message);
+      return;
+    }
+    showApp();
+    await extractActiveTab();
+  } catch {
+    showAuthGate('Could not complete Authentik sign-in. Try again.');
+  }
+}
+
+function showApp(): void {
+  if (authGateEl) authGateEl.hidden = true;
+  if (appContentEl) appContentEl.hidden = false;
+}
+
+function showAuthGate(message = 'Sign in to continue.'): void {
+  if (appContentEl) appContentEl.hidden = true;
+  if (authGateEl) authGateEl.hidden = false;
+  setAuthStatus(message);
+  setSignInDisabled(false);
+}
+
+function setAuthStatus(message: string): void {
+  if (authStatusEl) authStatusEl.textContent = message;
+}
+
+function setSignInDisabled(disabled: boolean): void {
+  if (signInButton) signInButton.disabled = disabled;
+}
 
 async function extractActiveTab(): Promise<void> {
   clearFieldErrors();
   renderCandidates(undefined);
-  hideStatusAction();
   setStatus('Scanning the active tab…', 'status');
   setBusy(true);
 
@@ -124,7 +194,6 @@ async function saveJob(): Promise<void> {
   }
 
   saveInFlight = true;
-  hideStatusAction();
   setStatus('Saving job…', 'status');
   setSaveDisabled(true);
 
@@ -152,7 +221,6 @@ async function saveJob(): Promise<void> {
 function enterManualEntry(): void {
   clearFieldErrors();
   renderCandidates(undefined);
-  hideStatusAction();
   applyFormValues(emptyFormValues());
   setStatus('Manual entry. Fill in the fields and save.', 'status');
   focusField('job_title');
@@ -225,8 +293,7 @@ function handleError(code: string, message: string): void {
   }
 
   if (code === 'OAUTH_FAILED') {
-    setStatus(message, 'alert');
-    showStatusAction();
+    showAuthGate(message);
     return;
   }
 
@@ -413,14 +480,6 @@ function setStatus(message: string, kind: 'status' | 'alert' = 'status'): void {
   if (!statusEl) return;
   statusEl.textContent = message;
   statusEl.setAttribute('role', kind);
-}
-
-function showStatusAction(): void {
-  if (statusActionEl) statusActionEl.hidden = false;
-}
-
-function hideStatusAction(): void {
-  if (statusActionEl) statusActionEl.hidden = true;
 }
 
 function setBusy(disabled: boolean): void {

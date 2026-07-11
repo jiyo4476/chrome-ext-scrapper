@@ -50,6 +50,31 @@ h1 {
   margin: 0;
 }
 
+h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.auth-gate {
+  display: grid;
+  gap: 12px;
+  padding-block: 20px;
+  text-align: center;
+}
+
+.auth-gate p {
+  margin: 0;
+}
+
+#app-content {
+  display: grid;
+  gap: 14px;
+}
+
 a {
   color: LinkText;
 }
@@ -148,15 +173,6 @@ details[open] summary {
 
 #status[role='alert'] {
   border-left-color: color-mix(in srgb, Mark 70%, Canvas);
-}
-
-#status-action {
-  display: inline-block;
-  font-weight: 600;
-}
-
-#status-action[hidden] {
-  display: none;
 }
 
 .field-error {
