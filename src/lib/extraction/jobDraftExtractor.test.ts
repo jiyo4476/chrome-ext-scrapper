@@ -944,6 +944,22 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
     expect(draft.job_description).toBe('Description only.');
     expect(draft.job_title).toBeUndefined();
   });
+
+  it('uses the selected split-view vjk value as the Indeed job ID', async () => {
+    window.history.replaceState({}, '', '/jobs?q=engineer&vjk=selected-123');
+    setBody(`
+      <h1 data-testid="jobsearch-JobInfoHeader-title">Software Engineer</h1>
+      <div data-testid="inlineHeader-companyName">Acme</div>
+      <div id="jobDescriptionText">Build reliable systems.</div>
+    `);
+
+    const { draft } = await extractJobDraft({
+      ...INDEED,
+      externalJobId: 'selected-123',
+    });
+
+    expect(draft.external_job_id).toBe('selected-123');
+  });
 });
 
 describe('extractJobDraft — Glassdoor DOM extraction', () => {
@@ -978,6 +994,39 @@ describe('extractJobDraft — Glassdoor DOM extraction', () => {
 
     expect(draft.job_title).toBe('Frontend Developer');
     expect(draft.company_name).toBeUndefined();
+  });
+});
+
+describe('extractJobDraft — Dice DOM extraction', () => {
+  const DICE = { platform: 'dice' as const, confidence: 'high' as const };
+
+  it('extracts a Dice detail page within the matching job container', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/job-detail/123e4567-e89b-12d3-a456-426614174000',
+    );
+    document.body.innerHTML = `
+      <main>
+        <a href="/job-detail/123e4567-e89b-12d3-a456-426614174000">
+          <h1>Senior Software Engineer</h1>
+        </a>
+        <a href="/company-profile/acme">Acme Corp</a>
+        <p data-testid="job-location">Denver, Colorado</p>
+        <section data-testid="job-description">Build secure browser tooling.</section>
+      </main>
+    `;
+
+    const { draft } = await extractJobDraft(DICE);
+
+    expect(draft).toMatchObject({
+      source_platform: 'dice',
+      external_job_id: '123e4567-e89b-12d3-a456-426614174000',
+      company_name: 'Acme Corp',
+      job_title: 'Senior Software Engineer',
+      job_location: 'Denver, Colorado',
+      job_description: 'Build secure browser tooling.',
+    });
   });
 });
 

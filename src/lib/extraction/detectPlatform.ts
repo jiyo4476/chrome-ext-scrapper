@@ -5,10 +5,59 @@ export type PlatformConfidence = 'high' | 'low';
 export interface PlatformDetection {
   platform: ApiSourcePlatform;
   confidence: PlatformConfidence;
+  externalJobId?: string;
 }
 
 function hostMatches(host: string, domain: string): boolean {
   return host === domain || host.endsWith(`.${domain}`);
+}
+
+export const AUTO_SCRAPE_DOMAINS = [
+  'linkedin.com',
+  'indeed.com',
+  'glassdoor.com',
+  'dice.com',
+] as const;
+
+function getIndeedJobId(parsed: URL): string | undefined {
+  return (
+    parsed.searchParams.get('jk') ?? parsed.searchParams.get('vjk') ?? undefined
+  );
+}
+
+export function isAutoScrapeUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+
+  if (parsed.protocol !== 'https:') return false;
+
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+
+  if (!AUTO_SCRAPE_DOMAINS.some((domain) => hostMatches(host, domain))) {
+    return false;
+  }
+
+  if (hostMatches(host, 'linkedin.com')) {
+    return path.startsWith('/jobs/view/') || path.startsWith('/jobs/search');
+  }
+  if (hostMatches(host, 'indeed.com')) {
+    return (
+      Boolean(getIndeedJobId(parsed)) &&
+      (path === '/viewjob' || path === '/jobs')
+    );
+  }
+  if (hostMatches(host, 'glassdoor.com')) {
+    return path.includes('/job-listing/');
+  }
+  if (hostMatches(host, 'dice.com')) {
+    return path.startsWith('/job-detail/');
+  }
+  return false;
 }
 
 // Google serves the same job-search UI across many country TLDs. A regex
@@ -100,7 +149,12 @@ export function detectPlatform(url: string): PlatformDetection {
     return { platform: 'linkedin', confidence: 'high' };
   }
   if (hostMatches(host, 'indeed.com')) {
-    return { platform: 'indeed', confidence: 'high' };
+    const externalJobId = getIndeedJobId(new URL(url));
+    return {
+      platform: 'indeed',
+      confidence: 'high',
+      ...(externalJobId ? { externalJobId } : {}),
+    };
   }
   if (hostMatches(host, 'glassdoor.com')) {
     return { platform: 'glassdoor', confidence: 'high' };

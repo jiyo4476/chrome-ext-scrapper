@@ -166,12 +166,26 @@ details[open] summary {
 }
 
 #status {
-  border-left: 3px solid color-mix(in srgb, Highlight 65%, Canvas);
-  min-height: 20px;
-  padding-left: 10px;
+  align-self: start;
+  background: color-mix(in srgb, Highlight 10%, Canvas);
+  border: 1px solid color-mix(in srgb, Highlight 38%, Canvas);
+  border-left: 4px solid color-mix(in srgb, Highlight 70%, Canvas);
+  border-radius: 8px;
+  box-shadow: 0 3px 12px color-mix(in srgb, CanvasText 16%, transparent);
+  line-height: 1.4;
+  max-height: min(30vh, 120px);
+  min-height: 42px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  position: sticky;
+  top: 8px;
+  z-index: 10;
 }
 
 #status[role='alert'] {
+  background: color-mix(in srgb, Mark 12%, Canvas);
+  border-color: color-mix(in srgb, Mark 42%, Canvas);
   border-left-color: color-mix(in srgb, Mark 70%, Canvas);
 }
 

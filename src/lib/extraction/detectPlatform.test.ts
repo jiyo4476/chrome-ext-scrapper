@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectPlatform } from './detectPlatform';
+import { detectPlatform, isAutoScrapeUrl } from './detectPlatform';
 
 describe('detectPlatform', () => {
   it.each([
@@ -13,9 +13,18 @@ describe('detectPlatform', () => {
     ['https://wellfound.com/jobs/123', 'angellist'],
     ['https://angel.co/company/foo/jobs/123', 'angellist'],
   ])('detects %s as %s with high confidence', (url, expectedPlatform) => {
-    expect(detectPlatform(url)).toEqual({
+    expect(detectPlatform(url)).toMatchObject({
       platform: expectedPlatform,
       confidence: 'high',
+    });
+  });
+
+  it('carries the canonical Indeed job ID into the extraction context', () => {
+    expect(
+      detectPlatform('https://www.indeed.com/jobs?q=engineer&vjk=selected-123'),
+    ).toMatchObject({
+      platform: 'indeed',
+      externalJobId: 'selected-123',
     });
   });
 
@@ -91,5 +100,36 @@ describe('detectPlatform', () => {
       platform: 'other',
       confidence: 'low',
     });
+  });
+});
+
+describe('isAutoScrapeUrl', () => {
+  it.each([
+    'https://www.linkedin.com/jobs/view/123',
+    'https://www.linkedin.com/jobs/search/?keywords=engineer',
+    'https://www.indeed.com/viewjob?jk=abc123',
+    'https://www.indeed.com/viewjob/?jk=abc123',
+    'https://www.indeed.com/jobs?q=engineer&vjk=abc123',
+    'https://www.indeed.com/jobs/?q=engineer&vjk=abc123',
+    'https://www.glassdoor.com/job-listing/software-engineer-acme.htm?jl=123',
+    'https://www.dice.com/job-detail/123e4567-e89b-12d3-a456-426614174000',
+  ])('allows a supported provider job page: %s', (url) => {
+    expect(isAutoScrapeUrl(url)).toBe(true);
+  });
+
+  it.each([
+    'http://www.linkedin.com/jobs/view/123',
+    'https://www.linkedin.com/feed/',
+    'https://www.indeed.com/companies',
+    'https://www.indeed.com/jobs?q=engineer',
+    'https://www.indeed.com/viewjob',
+    'https://www.glassdoor.com/Reviews/index.htm',
+    'https://www.dice.com/companies',
+    'https://linkedin.com.attacker.net/jobs/view/123',
+    'https://www.indeed.com.evil.example/viewjob?jk=abc123',
+    'https://example.com/jobs/123',
+    'chrome://extensions/',
+  ])('rejects unsupported domains and non-job routes: %s', (url) => {
+    expect(isAutoScrapeUrl(url)).toBe(false);
   });
 });

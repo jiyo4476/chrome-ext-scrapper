@@ -129,7 +129,7 @@ describe('background save flow', () => {
     expect(response).toEqual({
       type: 'GET_SETTINGS_RESULT',
       ok: true,
-      settings: { apiBaseUrl: 'http://localhost:3000', autoDetect: false },
+      settings: { apiBaseUrl: 'http://localhost:3000', autoDetect: true },
     });
     expect(response).not.toHaveProperty('settings.oauthAccessToken');
     expect(response).not.toHaveProperty('settings.oauthRefreshToken');
@@ -163,7 +163,13 @@ describe('background save flow', () => {
     });
     expect(browserMock.scripting.executeScript).toHaveBeenCalledWith(
       expect.objectContaining({
-        args: [{ platform: 'indeed', confidence: 'high' }],
+        args: [
+          {
+            platform: 'indeed',
+            confidence: 'high',
+            externalJobId: 'abc123',
+          },
+        ],
       }),
     );
   });
@@ -178,6 +184,54 @@ describe('background save flow', () => {
       type: 'ERROR',
       ok: false,
       error: { code: 'TAB_NOT_FOUND' },
+    });
+    expect(browserMock.scripting.executeScript).not.toHaveBeenCalled();
+  });
+
+  it('does not inject the scraper on unsupported domains', async () => {
+    browserMock.tabs.query.mockResolvedValue([
+      { id: 1, url: 'https://mail.example.com/inbox' },
+    ]);
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    const response = await handleMessage({ type: 'EXTRACT_ACTIVE_TAB' });
+
+    expect(response).toMatchObject({
+      type: 'ERROR',
+      ok: false,
+      error: { code: 'DOMAIN_NOT_SUPPORTED' },
+    });
+    expect(browserMock.scripting.executeScript).not.toHaveBeenCalled();
+  });
+
+  it('does not inject the scraper on non-job pages of supported domains', async () => {
+    browserMock.tabs.query.mockResolvedValue([
+      { id: 1, url: 'https://www.linkedin.com/feed/' },
+    ]);
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    const response = await handleMessage({ type: 'EXTRACT_ACTIVE_TAB' });
+
+    expect(response).toMatchObject({
+      type: 'ERROR',
+      ok: false,
+      error: { code: 'DOMAIN_NOT_SUPPORTED' },
+    });
+    expect(browserMock.scripting.executeScript).not.toHaveBeenCalled();
+  });
+
+  it('does not inject the scraper on a bare Indeed results page', async () => {
+    browserMock.tabs.query.mockResolvedValue([
+      { id: 1, url: 'https://www.indeed.com/jobs?q=engineer' },
+    ]);
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    const response = await handleMessage({ type: 'EXTRACT_ACTIVE_TAB' });
+
+    expect(response).toMatchObject({
+      type: 'ERROR',
+      ok: false,
+      error: { code: 'DOMAIN_NOT_SUPPORTED' },
     });
     expect(browserMock.scripting.executeScript).not.toHaveBeenCalled();
   });
