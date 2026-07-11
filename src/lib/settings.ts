@@ -20,25 +20,63 @@ export const extensionSettingsSchema = z.object({
 
 export const extensionSettingsUpdateSchema = extensionSettingsSchema.partial();
 
+export const publicSettingsSchema = extensionSettingsSchema.pick({
+  apiBaseUrl: true,
+  autoDetect: true,
+});
+
+export const publicSettingsUpdateSchema = publicSettingsSchema
+  .pick({ autoDetect: true })
+  .partial();
+
 export type ExtensionSettings = z.infer<typeof extensionSettingsSchema>;
 export type ExtensionSettingsUpdate = z.infer<
   typeof extensionSettingsUpdateSchema
 >;
+export type PublicSettings = z.infer<typeof publicSettingsSchema>;
+export type PublicSettingsUpdate = z.infer<typeof publicSettingsUpdateSchema>;
 
 const STORAGE_KEY = 'jobTracker.settings';
 
 export async function getSettings(): Promise<ExtensionSettings> {
   const result = await browser.storage.local.get(STORAGE_KEY);
-  return extensionSettingsSchema.parse(result[STORAGE_KEY] ?? {});
+  return lockProtectedSettings(
+    extensionSettingsSchema.parse(result[STORAGE_KEY] ?? {}),
+  );
 }
 
 export async function saveSettings(
   settings: ExtensionSettingsUpdate,
 ): Promise<ExtensionSettings> {
   const current = await getSettings();
-  const parsed = extensionSettingsSchema.parse({ ...current, ...settings });
+  const parsed = lockProtectedSettings(
+    extensionSettingsSchema.parse({ ...current, ...settings }),
+  );
   await browser.storage.local.set({ [STORAGE_KEY]: parsed });
   return parsed;
+}
+
+function lockProtectedSettings(settings: ExtensionSettings): ExtensionSettings {
+  return {
+    ...settings,
+    apiBaseUrl: DEFAULT_API_BASE_URL,
+    authentikBaseUrl: DEFAULT_AUTHENTIK_BASE_URL,
+    oauthClientId: DEFAULT_OAUTH_CLIENT_ID,
+    oauthScope: DEFAULT_OAUTH_SCOPE,
+    apiKey: '',
+  };
+}
+
+export function toPublicSettings(settings: ExtensionSettings): PublicSettings {
+  return publicSettingsSchema.parse(settings);
+}
+
+export async function clearOAuthCredentials(): Promise<ExtensionSettings> {
+  return saveSettings({
+    oauthAccessToken: '',
+    oauthRefreshToken: '',
+    oauthExpiresAt: 0,
+  });
 }
 
 export function redactApiKey(value: string): string {

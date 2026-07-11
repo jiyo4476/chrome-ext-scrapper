@@ -1,8 +1,5 @@
 import { z } from 'zod';
-import {
-  extensionSettingsSchema,
-  extensionSettingsUpdateSchema,
-} from './settings';
+import { publicSettingsSchema, publicSettingsUpdateSchema } from './settings';
 import { jobDraftSchema, scrapePayloadSchema } from './schemas';
 
 export const extensionErrorCodeSchema = z.enum([
@@ -43,11 +40,19 @@ export const getSettingsRequestSchema = z.object({
 
 export const saveSettingsRequestSchema = z.object({
   type: z.literal('SAVE_SETTINGS'),
-  settings: extensionSettingsUpdateSchema,
+  settings: publicSettingsUpdateSchema,
 });
 
 export const oauthSignInRequestSchema = z.object({
   type: z.literal('OAUTH_SIGN_IN'),
+});
+
+export const oauthSignOutRequestSchema = z.object({
+  type: z.literal('OAUTH_SIGN_OUT'),
+});
+
+export const getAuthStatusRequestSchema = z.object({
+  type: z.literal('GET_AUTH_STATUS'),
 });
 
 export const testConnectionRequestSchema = z.object({
@@ -62,7 +67,7 @@ export const extractionCandidateSchema = z.object({
 
 export const extractionCandidatesSchema = z.record(
   z.string(),
-  z.array(extractionCandidateSchema),
+  z.array(extractionCandidateSchema).max(20),
 );
 
 export const extractActiveTabResponseSchema = z.object({
@@ -92,18 +97,34 @@ export const saveJobResponseSchema = z.object({
 export const getSettingsResponseSchema = z.object({
   type: z.literal('GET_SETTINGS_RESULT'),
   ok: z.literal(true),
-  settings: extensionSettingsSchema,
+  settings: publicSettingsSchema,
 });
 
 export const saveSettingsResponseSchema = z.object({
   type: z.literal('SAVE_SETTINGS_RESULT'),
   ok: z.literal(true),
-  settings: extensionSettingsSchema,
+  settings: publicSettingsSchema,
+});
+
+export const oauthSignInResponseSchema = z.object({
+  type: z.literal('OAUTH_SIGN_IN_RESULT'),
+  ok: z.literal(true),
+});
+
+export const oauthSignOutResponseSchema = z.object({
+  type: z.literal('OAUTH_SIGN_OUT_RESULT'),
+  ok: z.literal(true),
 });
 
 export const testConnectionResponseSchema = z.object({
   type: z.literal('TEST_CONNECTION_RESULT'),
   ok: z.literal(true),
+});
+
+export const getAuthStatusResponseSchema = z.object({
+  type: z.literal('GET_AUTH_STATUS_RESULT'),
+  ok: z.literal(true),
+  authenticated: z.boolean(),
 });
 
 export const extensionErrorResponseSchema = z.object({
@@ -118,6 +139,8 @@ export const extensionMessageSchema = z.discriminatedUnion('type', [
   getSettingsRequestSchema,
   saveSettingsRequestSchema,
   oauthSignInRequestSchema,
+  oauthSignOutRequestSchema,
+  getAuthStatusRequestSchema,
   testConnectionRequestSchema,
 ]);
 
@@ -126,7 +149,10 @@ export const extensionResponseSchema = z.union([
   saveJobResponseSchema,
   getSettingsResponseSchema,
   saveSettingsResponseSchema,
+  oauthSignInResponseSchema,
+  oauthSignOutResponseSchema,
   testConnectionResponseSchema,
+  getAuthStatusResponseSchema,
   extensionErrorResponseSchema,
 ]);
 

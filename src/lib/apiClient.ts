@@ -3,6 +3,8 @@ import { type SaveJobResult, saveJobResultSchema } from './messages';
 import type { ScrapePayload } from './schemas';
 import type { ExtensionSettings } from './settings';
 
+const MAX_API_RESPONSE_BYTES = 1_000_000;
+
 export class ApiClientError extends Error {
   constructor(
     readonly code:
@@ -124,7 +126,31 @@ function buildHeaders(settings: ExtensionSettings): HeadersInit {
 }
 
 async function readJsonResponse(response: Response): Promise<unknown> {
-  const text = await response.text();
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (
+    Number.isFinite(declaredLength) &&
+    declaredLength > MAX_API_RESPONSE_BYTES
+  ) {
+    throw responseTooLargeError();
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) return {};
+
+  const decoder = new TextDecoder();
+  let bytesRead = 0;
+  let text = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytesRead += value.byteLength;
+    if (bytesRead > MAX_API_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw responseTooLargeError();
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  text += decoder.decode();
   if (!text) return {};
 
   try {
@@ -136,6 +162,13 @@ async function readJsonResponse(response: Response): Promise<unknown> {
       stringifyUnknown(error),
     );
   }
+}
+
+function responseTooLargeError(): ApiClientError {
+  return new ApiClientError(
+    'API_UNEXPECTED_RESPONSE',
+    'The Job Tracker API returned an oversized response.',
+  );
 }
 
 function stringifyUnknown(error: unknown): string | undefined {

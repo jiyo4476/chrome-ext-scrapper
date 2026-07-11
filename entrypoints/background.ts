@@ -16,7 +16,12 @@ import { extractJobDraft } from '../src/lib/extraction/jobDraftExtractor';
 import { getValidAccessToken, signInWithAuthentik } from '../src/lib/oauth';
 import { buildScrapePayload } from '../src/lib/payload';
 import { type JobDraft, jobDraftSchema } from '../src/lib/schemas';
-import { getSettings, saveSettings } from '../src/lib/settings';
+import {
+  clearOAuthCredentials,
+  getSettings,
+  saveSettings,
+  toPublicSettings,
+} from '../src/lib/settings';
 
 let saveJobInFlight = false;
 
@@ -46,24 +51,54 @@ export async function handleMessage(
 
   if (message.type === 'GET_SETTINGS') {
     const settings = await getSettings();
-    return { type: 'GET_SETTINGS_RESULT', ok: true, settings };
+    return {
+      type: 'GET_SETTINGS_RESULT',
+      ok: true,
+      settings: toPublicSettings(settings),
+    };
   }
 
   if (message.type === 'SAVE_SETTINGS') {
     const settings = await saveSettings(message.settings);
-    return { type: 'SAVE_SETTINGS_RESULT', ok: true, settings };
+    return {
+      type: 'SAVE_SETTINGS_RESULT',
+      ok: true,
+      settings: toPublicSettings(settings),
+    };
   }
 
   if (message.type === 'OAUTH_SIGN_IN') {
     try {
-      const settings = await signInWithAuthentik(await getSettings());
-      return { type: 'SAVE_SETTINGS_RESULT', ok: true, settings };
+      await signInWithAuthentik(await getSettings());
+      return { type: 'OAUTH_SIGN_IN_RESULT', ok: true };
     } catch (error) {
       return errorResponse(
         'OAUTH_FAILED',
         'Authentik sign-in failed.',
         error instanceof Error ? error.message : undefined,
       );
+    }
+  }
+
+  if (message.type === 'OAUTH_SIGN_OUT') {
+    await clearOAuthCredentials();
+    return { type: 'OAUTH_SIGN_OUT_RESULT', ok: true };
+  }
+
+  if (message.type === 'GET_AUTH_STATUS') {
+    try {
+      await getValidAccessToken(await getSettings());
+      return {
+        type: 'GET_AUTH_STATUS_RESULT',
+        ok: true,
+        authenticated: true,
+      };
+    } catch {
+      return {
+        type: 'GET_AUTH_STATUS_RESULT',
+        ok: true,
+        authenticated: false,
+      };
     }
   }
 
@@ -142,13 +177,13 @@ function filterInvalidCandidates(
 
   for (const [field, list] of Object.entries(
     candidates as Record<string, unknown>,
-  )) {
+  ).slice(0, 30)) {
     const fieldSchema = shape[field];
     if (!fieldSchema || !Array.isArray(list)) continue;
 
-    const validList = (list as ExtractionCandidate[]).filter(
-      (candidate) => fieldSchema.safeParse(candidate.value).success,
-    );
+    const validList = (list as ExtractionCandidate[])
+      .slice(0, 20)
+      .filter((candidate) => fieldSchema.safeParse(candidate.value).success);
     if (validList.length > 0) {
       filtered[field] = validList;
     }
