@@ -66,9 +66,6 @@ const statusActionEl =
 const form = document.querySelector<HTMLFormElement>('#job-form');
 const extractButton =
   document.querySelector<HTMLButtonElement>('#extract-button');
-const manualEntryButton = document.querySelector<HTMLButtonElement>(
-  '#manual-entry-button',
-);
 const exportButton =
   document.querySelector<HTMLButtonElement>('#export-button');
 const saveButton = document.querySelector<HTMLButtonElement>('#save-button');
@@ -77,10 +74,6 @@ let saveInFlight = false;
 
 extractButton?.addEventListener('click', () => {
   void extractActiveTab();
-});
-
-manualEntryButton?.addEventListener('click', () => {
-  enterManualEntry();
 });
 
 exportButton?.addEventListener('click', () => {
@@ -246,6 +239,11 @@ function renderCandidates(candidates: ExtractionCandidates | undefined): void {
     if (!container) return;
 
     container.innerHTML = '';
+    if (field === 'job_description') {
+      container.hidden = true;
+      return;
+    }
+
     const list = candidates?.[field];
     if (!list || list.length < 2) {
       container.hidden = true;
@@ -434,17 +432,12 @@ function setBusy(disabled: boolean): void {
       el.disabled = disabled;
     });
   setExtractDisabled(disabled);
-  setManualEntryDisabled(disabled);
   setExportDisabled(disabled);
   setSaveDisabled(disabled);
 }
 
 function setExtractDisabled(disabled: boolean): void {
   if (extractButton) extractButton.disabled = disabled;
-}
-
-function setManualEntryDisabled(disabled: boolean): void {
-  if (manualEntryButton) manualEntryButton.disabled = disabled;
 }
 
 function setExportDisabled(disabled: boolean): void {

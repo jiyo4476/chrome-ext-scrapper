@@ -281,12 +281,12 @@ describe('extractJobDraft — OpenGraph fallback', () => {
       <meta property="og:site_name" content="Indeed" />
     `);
 
-    // Use a job-board platform with no dom-extraction block (linkedin) so
-    // this test isn't incidentally taxed by another platform's dynamic-wait
+    // Use a job-board platform with no dom-extraction block (dice) so this
+    // test isn't incidentally taxed by another platform's dynamic-wait
     // timeout -- the guard itself is platform-agnostic across the whole
     // JOB_BOARD_PLATFORMS set, which is exercised more broadly below.
     const { draft } = await extractJobDraft({
-      platform: 'linkedin',
+      platform: 'dice',
       confidence: 'high',
     });
 
@@ -432,6 +432,450 @@ describe('extractJobDraft — merge priority', () => {
       'jsonld',
       'visible-text',
     ]);
+  });
+});
+
+describe('extractJobDraft — LinkedIn DOM extraction', () => {
+  const LINKEDIN = {
+    platform: 'linkedin' as const,
+    confidence: 'high' as const,
+  };
+
+  // None of these set the company profile-link anchor, location column, or
+  // "About the job" section, so the secondary waitForEach call always runs
+  // out its full timeout -- use fake timers to avoid paying that 800ms in
+  // real wall-clock time per test.
+
+  it('extracts job_title and company_name from the pipe-delimited page title', async () => {
+    document.title = 'Senior Software Engineer | Acme Corp | LinkedIn';
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    expect(draft.job_title).toBe('Senior Software Engineer');
+    expect(draft.company_name).toBe('Acme Corp');
+  });
+
+  it('strips a leading unread-notification badge from the page title', async () => {
+    document.title = '(3) Senior Software Engineer | Acme Corp | LinkedIn';
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    expect(draft.job_title).toBe('Senior Software Engineer');
+    expect(draft.company_name).toBe('Acme Corp');
+  });
+
+  it('adds no page-title candidate when the title has fewer than 3 pipe-delimited segments', async () => {
+    document.title = 'Software Engineer jobs in United States | LinkedIn';
+    setBody('<h1>Software Engineer jobs in United States</h1>');
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    expect(draft.company_name).toBeUndefined();
+  });
+
+  it('adds no page-title candidate when the last segment is not "LinkedIn"', async () => {
+    document.title = 'Senior Software Engineer | Acme Corp | Careers';
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    expect(draft.company_name).toBeUndefined();
+    expect(draft.job_title).toBeUndefined();
+  });
+
+  it('extracts company_name from the employer profile link', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/life">Acme Corp</a>
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.company_name).toBe('Acme Corp');
+    expect(draft.job_location).toBe('Austin, TX');
+  });
+
+  it('extracts LinkedIn company_name from the selected last lazy column', async () => {
+    document.title = 'Software Engineer jobs in United States | LinkedIn';
+    setBody(`
+      <h1>Software Engineer jobs in United States</h1>
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/wrong-company/">Wrong Company</a>
+        <p><span>San Francisco Bay Area</span></p>
+      </div>
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/life">Acme Corp</a>
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.company_name).toBe('Acme Corp');
+  });
+
+  it('resolves the company link after it appears asynchronously', async () => {
+    setBody('<h1>Senior Software Engineer</h1>');
+
+    const pending = extractJobDraft(LINKEDIN);
+    setTimeout(() => {
+      // Also populate the location column and description section in the
+      // same tick -- otherwise those still-pending groups would hold this
+      // waitForEach call open for its full real 800ms timeout before
+      // resolving.
+      setBody(
+        document.body.innerHTML +
+          '<div data-testid="lazy-column"><a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a><p><span>Austin, TX</span></p><div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div></div>',
+      );
+    }, 0);
+
+    const { draft } = await pending;
+    expect(draft.company_name).toBe('Acme Corp');
+    expect(draft.job_location).toBe('Austin, TX');
+  });
+
+  it('falls back to no dom company_name candidate when the link never appears', async () => {
+    setBody('<h1>Senior Software Engineer</h1>');
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    expect(draft.company_name).toBeUndefined();
+  });
+
+  it('extracts job_location from the lazy-loaded detail column', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_location).toBe('Austin, TX');
+  });
+
+  it('extracts LinkedIn job_location from the location paragraph instead of preceding metadata', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>Posted 2 weeks ago</span></p>
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_location).toBe('Austin, TX');
+  });
+
+  it('extracts LinkedIn job_location from the last lazy column', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>San Francisco Bay Area</span></p>
+      </div>
+      <div data-testid="lazy-column">
+        <p><span>Posted 2 weeks ago</span></p>
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_location).toBe('Austin, TX');
+  });
+
+  it('prefers the specific LinkedIn location when the paragraph above also looks location-like', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>San Francisco Bay Area</span></p>
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_location).toBe('Austin, TX');
+  });
+
+  it('extracts LinkedIn job_location for non-comma region formats', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>Over 100 applicants</span></p>
+        <p><span>New York City Metropolitan Area</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_location).toBe('New York City Metropolitan Area');
+  });
+
+  it('extracts LinkedIn job_location from the first span in the metadata row instead of the remote chip', async () => {
+    setBody(`
+      <h1>Software Developer</h1>
+      <a href="https://www.linkedin.com/company/intelex-technologies-ulc/life/">Intelex Technologies ULC</a>
+      <div data-testid="lazy-column">
+        <p>
+          <a href="https://www.linkedin.com/jobs/view/4402229024/">Software Developer</a>
+        </p>
+        <p>
+          <span>United States</span>
+          <span> </span>·<span> </span>
+          <span><strong>Reposted 13 hours ago</strong></span>
+          <span> </span>·<span> </span>
+          <span>Over 100 people clicked apply</span>
+        </p>
+        <a href="/jobs/search-results/?keywords=remote"><span>Remote</span></a>
+        <a href="/jobs/search-results/?keywords=full-time"><span>Full-time</span></a>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_location).toBe('United States');
+  });
+
+  it('resolves job_location after the detail column appears asynchronously', async () => {
+    setBody('<h1>Senior Software Engineer</h1>');
+
+    const pending = extractJobDraft(LINKEDIN);
+    setTimeout(() => {
+      // Also populate the company anchor and description section in the
+      // same tick -- otherwise those still-pending groups would hold this
+      // waitForEach call open for its full real 800ms timeout before
+      // resolving.
+      setBody(
+        document.body.innerHTML +
+          '<a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>' +
+          '<div data-testid="lazy-column"><p><span>Remote</span></p><div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div></div>',
+      );
+    }, 0);
+
+    const { draft } = await pending;
+    expect(draft.job_location).toBe('Remote');
+  });
+
+  it('falls back to no dom job_location candidate when the detail column never appears', async () => {
+    setBody('<h1>Senior Software Engineer</h1>');
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    expect(draft.job_location).toBeUndefined();
+  });
+
+  it('extracts job_description from the "About the job" section, excluding the heading text', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-description">
+          <h2>About the job</h2>
+          <p>Build great products for millions of members.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe(
+      'Build great products for millions of members.',
+    );
+    expect(draft.job_description).not.toContain('About the job');
+  });
+
+  it('stops LinkedIn job_description before the next peer section heading', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-details">
+        <h2>About the job</h2>
+        <p>Build reliable product systems.</p>
+        <h3>Responsibilities</h3>
+        <p>Own backend services.</p>
+        <h2>About the company</h2>
+        <p>Acme was founded in 2005.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe(
+      'Build reliable product systems. Responsibilities Own backend services.',
+    );
+    expect(draft.job_description).not.toContain('About the company');
+    expect(draft.job_description).not.toContain('Acme was founded');
+  });
+
+  it('extracts LinkedIn job_description when the heading is wrapped separately from the body', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-details">
+          <div class="heading-wrapper"><h2>About the job</h2></div>
+          <div><p>Build reliable product systems.</p></div>
+          <h2>About the company</h2>
+          <p>Acme was founded in 2005.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe('Build reliable product systems.');
+  });
+
+  it('extracts LinkedIn job_description from a search split-view details pane only', async () => {
+    document.title = 'Software Engineer jobs in United States | LinkedIn';
+    setBody(`
+      <main>
+        <ul class="jobs-search-results-list">
+          <li>
+            <h3>Software Engineer</h3>
+            <p>Search result card teaser that should not be scraped.</p>
+          </li>
+        </ul>
+        <section class="jobs-search__job-details">
+          <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+          <div data-testid="lazy-column">
+            <p><span>San Francisco Bay Area</span></p>
+            <article class="jobs-description">
+              <h2>About the job</h2>
+              <p>Earlier lazy-column description that should not be scraped.</p>
+            </article>
+          </div>
+          <div data-testid="lazy-column">
+            <p><span>Austin, TX</span></p>
+            <article class="jobs-description">
+              <div><h2>About the job</h2></div>
+              <div>
+                <p>Build reliable product systems.</p>
+                <h3>What you will do</h3>
+                <p>Improve the selected job workflow.</p>
+              </div>
+              <h2>About the company</h2>
+              <p>Company profile text should not be scraped.</p>
+            </article>
+          </div>
+        </section>
+        <aside>
+          <h2>Similar jobs</h2>
+          <p>Another posting description that should not be scraped.</p>
+        </aside>
+      </main>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe(
+      'Build reliable product systems. What you will do Improve the selected job workflow.',
+    );
+    expect(draft.job_location).toBe('Austin, TX');
+    expect(draft.job_description).not.toContain('Search result card teaser');
+    expect(draft.job_description).not.toContain('Earlier lazy-column');
+    expect(draft.job_description).not.toContain('Company profile text');
+    expect(draft.job_description).not.toContain('Another posting description');
+  });
+
+  it('resolves job_description after the section appears asynchronously', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>
+    `);
+
+    const pending = extractJobDraft(LINKEDIN);
+    setTimeout(() => {
+      setBody(
+        document.body.innerHTML.replace(
+          '</div>',
+          '<div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div></div>',
+        ),
+      );
+    }, 0);
+
+    const { draft } = await pending;
+    expect(draft.job_description).toBe('Build great things.');
+  });
+
+  it('falls back to no dom job_description candidate when no "About the job" heading appears', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>
+    `);
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    // The generic low-confidence visible-text fallback still fills
+    // job_description from the whole body -- what matters here is that no
+    // high-confidence 'dom' candidate was fabricated to win over it.
+    expect(draft.extraction_confidence?.job_description).not.toBe('high');
+  });
+
+  it('ignores an unrelated heading like "About the company"', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column"><p><span>Austin, TX</span></p></div>
+      <div class="jobs-about-company"><h2>About the company</h2><p>Founded in 2005.</p></div>
+    `);
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(LINKEDIN);
+    await vi.advanceTimersByTimeAsync(800);
+    const { draft } = await pending;
+
+    // The generic low-confidence visible-text fallback picks up the whole
+    // page body (including this unrelated section), which is expected --
+    // what this test guards is that the DOM extractor itself didn't treat
+    // "About the company" as a match for "About the job".
+    expect(draft.extraction_confidence?.job_description).not.toBe('high');
   });
 });
 

@@ -110,23 +110,27 @@ export async function extractJobDraft(detection: {
     return text || undefined;
   }
 
-  // Waits on several independent selector groups at once via a single
-  // shared MutationObserver, instead of one observer per group -- avoids
+  function bySelector(selectors: string[]): () => Element | undefined {
+    return () => queryFirst(selectors) ?? undefined;
+  }
+
+  // Waits on several independent element finders at once via a single
+  // shared MutationObserver, instead of one observer per finder -- avoids
   // doubling observer-callback overhead when a platform extractor needs to
-  // wait on e.g. title and description together.
+  // wait on e.g. title and description together. Each finder can be a
+  // CSS-selector lookup (see `bySelector`) or any other DOM query, e.g.
+  // matching by text content, which no CSS selector alone can express.
   function waitForEach(
-    selectorGroups: string[][],
+    finders: (() => Element | undefined)[],
     timeoutMs: number,
   ): Promise<(Element | undefined)[]> {
     return new Promise((resolve) => {
-      const results: (Element | undefined)[] = selectorGroups.map(
-        () => undefined,
-      );
-      const pending = new Set(selectorGroups.map((_, i) => i));
+      const results: (Element | undefined)[] = finders.map(() => undefined);
+      const pending = new Set(finders.map((_, i) => i));
 
       function checkPending(): boolean {
         for (const i of Array.from(pending)) {
-          const el = queryFirst(selectorGroups[i] ?? []);
+          const el = finders[i]?.();
           if (el) {
             results[i] = el;
             pending.delete(i);
@@ -401,12 +405,15 @@ export async function extractJobDraft(detection: {
     // resolves and silently miss a still-loading description.
     const [titleEl, descriptionEl] = await waitForEach(
       [
-        [
+        bySelector([
           'h1.jobsearch-JobInfoHeader-title',
           '[data-testid="jobsearch-JobInfoHeader-title"]',
           'h1',
-        ],
-        ['#jobDescriptionText', '[data-testid="jobDescriptionText"]'],
+        ]),
+        bySelector([
+          '#jobDescriptionText',
+          '[data-testid="jobDescriptionText"]',
+        ]),
       ],
       800,
     );
@@ -442,8 +449,8 @@ export async function extractJobDraft(detection: {
   async function extractGlassdoorDom(): Promise<void> {
     const [titleEl, descriptionEl] = await waitForEach(
       [
-        ['[data-test="job-title"]', 'h1'],
-        ['[data-test="jobDescriptionContent"]', 'article'],
+        bySelector(['[data-test="job-title"]', 'h1']),
+        bySelector(['[data-test="jobDescriptionContent"]', 'article']),
       ],
       800,
     );
@@ -462,6 +469,211 @@ export async function extractJobDraft(detection: {
       textOf(queryFirst(['[data-test="location"]'])),
       'dom',
       'medium',
+    );
+  }
+
+  // LinkedIn's own <title> tag already spells out
+  // "{Title} | {Company} | LinkedIn" (optionally prefixed with an
+  // unread-notification badge like "(3) "). Parsing it is available the
+  // instant the page loads, unlike any DOM selector, which depends on
+  // LinkedIn's client-side render and rotates classnames across deploys.
+  function parseLinkedinPageTitle(rawTitle: string): {
+    company?: string | undefined;
+    title?: string | undefined;
+  } {
+    const withoutBadge = rawTitle.replace(/^\(\d+\)\s*/, '');
+    const parts = withoutBadge.split('|').map((part) => part.trim());
+    if (parts.length < 3 || parts.at(-1)?.toLowerCase() !== 'linkedin') {
+      return {};
+    }
+    return {
+      title: parts[0] || undefined,
+      company: parts[1] || undefined,
+    };
+  }
+
+  function findLastLinkedinLazyColumn(): Element | undefined {
+    return Array.from(
+      document.querySelectorAll('[data-testid="lazy-column"]'),
+    ).at(-1);
+  }
+
+  function findAboutTheJobHeading(): Element | undefined {
+    const root = findLastLinkedinLazyColumn() ?? document;
+    const heading = Array.from(root.querySelectorAll('h2')).find((h) =>
+      textOf(h)?.toLowerCase().includes('about the job'),
+    );
+    return heading ?? undefined;
+  }
+
+  function findLinkedinCompany(): Element | undefined {
+    const root = findLastLinkedinLazyColumn() ?? document;
+    return (
+      root.querySelector('a[href^="https://www.linkedin.com/company/"]') ??
+      undefined
+    );
+  }
+
+  function linkedinLocationScore(text: string): number {
+    const normalized = text.toLowerCase();
+    if (
+      /\b(ago|applicant|reposted|promoted|viewed|connections?)\b/.test(
+        normalized,
+      )
+    ) {
+      return 0;
+    }
+
+    let score = 0;
+    if (
+      /^(united states|canada|north america|european union|united kingdom)$/i.test(
+        text,
+      )
+    ) {
+      score = 2;
+    }
+    if (/\b(remote|hybrid|on-site|onsite)\b/.test(normalized)) score = 3;
+    if (/\b(area|region|district|metro|metropolitan)\b/.test(normalized)) {
+      score = 4;
+    }
+    if (/^[A-Z][A-Za-z .'-]+,\s*[A-Z][A-Za-z .'-]+\b/.test(text)) {
+      score = 5;
+    }
+    if (/^[A-Z][A-Za-z .'-]+,\s*[A-Z]{2}\b/.test(text)) score = 6;
+    if (/[·|]/.test(text)) score -= 2;
+    if (text.length > 120) score -= 2;
+    return Math.max(score, 0);
+  }
+
+  function findLinkedinLocation(): Element | undefined {
+    const lazyColumn = findLastLinkedinLazyColumn();
+    if (!lazyColumn) return undefined;
+
+    for (const paragraph of Array.from(lazyColumn.querySelectorAll('p'))) {
+      const paragraphText = textOf(paragraph);
+      if (!paragraphText || !/[·|]/.test(paragraphText)) continue;
+      if (
+        !/\b(ago|applicant|apply|clicked|reposted|promoted|viewed)\b/i.test(
+          paragraphText,
+        )
+      ) {
+        continue;
+      }
+
+      const firstSpan = Array.from(paragraph.querySelectorAll('span')).find(
+        (span) => {
+          const text = textOf(span);
+          return text ? linkedinLocationScore(text) > 0 : false;
+        },
+      );
+      if (firstSpan) return firstSpan;
+    }
+
+    const candidates = Array.from(lazyColumn.querySelectorAll('p, span'))
+      .map((el, index) => {
+        const text = textOf(el);
+        return {
+          el,
+          index,
+          score: text ? linkedinLocationScore(text) : 0,
+        };
+      })
+      .filter((candidate) => candidate.score > 0);
+
+    candidates.sort((a, b) => b.score - a.score || b.index - a.index);
+    return candidates[0]?.el;
+  }
+
+  function headingLevel(el: Element): number | undefined {
+    const match = /^H([1-6])$/.exec(el.tagName);
+    return match?.[1] ? Number(match[1]) : undefined;
+  }
+
+  // LinkedIn can render the "About the job" heading inside a broad details
+  // container that also includes adjacent sections. Read text after the
+  // heading in document order, stopping at the next same-or-higher-level
+  // heading, so neighboring sections do not leak into job_description.
+  function descriptionTextAfterHeading(heading: Element): string | undefined {
+    const startLevel = headingLevel(heading) ?? 2;
+    for (
+      let boundary = heading.parentElement;
+      boundary && boundary !== document.body.parentElement;
+      boundary = boundary.parentElement
+    ) {
+      const parts: string[] = [];
+      let afterHeading = false;
+      let stopped = false;
+      const walker = document.createTreeWalker(
+        boundary,
+        NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+        {
+          acceptNode(node) {
+            if (stopped) return NodeFilter.FILTER_REJECT;
+            if (node === heading) {
+              afterHeading = true;
+              return NodeFilter.FILTER_REJECT;
+            }
+            if (!afterHeading) {
+              return node.nodeType === Node.ELEMENT_NODE
+                ? NodeFilter.FILTER_SKIP
+                : NodeFilter.FILTER_REJECT;
+            }
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              const level = headingLevel(node as Element);
+              if (level !== undefined && level <= startLevel) {
+                stopped = true;
+                return NodeFilter.FILTER_REJECT;
+              }
+              return NodeFilter.FILTER_SKIP;
+            }
+            return node.textContent?.trim()
+              ? NodeFilter.FILTER_ACCEPT
+              : NodeFilter.FILTER_REJECT;
+          },
+        },
+      );
+
+      while (walker.nextNode()) {
+        const text = walker.currentNode.textContent
+          ?.replace(/\s+/g, ' ')
+          .trim();
+        if (text) parts.push(text);
+      }
+
+      const text = parts.join(' ').replace(/\s+/g, ' ').trim();
+      if (text) return text;
+    }
+    return undefined;
+  }
+
+  async function extractLinkedinDom(): Promise<void> {
+    const { company, title } = parseLinkedinPageTitle(document.title);
+    // Both fields come from an unambiguous pipe-delimited split, so both
+    // are as trustworthy as any other platform's dom-sourced high-confidence
+    // candidate.
+    addCandidate('company_name', company, 'dom', 'high');
+    addCandidate('job_title', title, 'dom', 'high');
+
+    // Secondary signal for company_name: the employer's own profile link is
+    // the only stable, hash-free DOM selector on LinkedIn's job pages, and
+    // covers cases where <title> doesn't follow the pipe-delimited pattern
+    // (e.g. a split-view search results page that hasn't navigated to a
+    // dedicated job URL). Scope it to the selected lazy column so search
+    // result cards do not leak into the active job. job_location and
+    // job_description have no page-title source at all, so their DOM
+    // selectors (rendered after the SPA hydrates) are the only signal
+    // available -- wait on all three together in one observer.
+    const [companyEl, locationEl, descriptionEl] = await waitForEach(
+      [findLinkedinCompany, findLinkedinLocation, findAboutTheJobHeading],
+      800,
+    );
+    addCandidate('company_name', textOf(companyEl), 'dom', 'high');
+    addCandidate('job_location', textOf(locationEl), 'dom', 'medium');
+    addCandidate(
+      'job_description',
+      descriptionEl ? descriptionTextAfterHeading(descriptionEl) : undefined,
+      'dom',
+      'high',
     );
   }
 
@@ -739,6 +951,7 @@ export async function extractJobDraft(detection: {
   const platformDomExtractors: Partial<
     Record<ApiSourcePlatform, () => Promise<void>>
   > = {
+    linkedin: extractLinkedinDom,
     indeed: extractIndeedDom,
     glassdoor: extractGlassdoorDom,
     google: extractGoogleJobsDom,
