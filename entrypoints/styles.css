@@ -76,6 +76,14 @@ label {
   justify-content: flex-start;
 }
 
+.top-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+}
+
 input,
 select,
 textarea {

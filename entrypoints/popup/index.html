@@ -24,6 +24,14 @@
       >
 
       <form id="job-form">
+        <div class="top-actions">
+          <button id="extract-button" type="button">Re-extract</button>
+          <label class="row" for="is-remote">
+            <input id="is-remote" name="is_remote" type="checkbox" />
+            Remote
+          </label>
+        </div>
+
         <label for="job-title">
           Title
           <input id="job-title" name="job_title" autocomplete="off" />
@@ -106,11 +114,6 @@
           aria-label="Alternative values for Location"
           hidden
         ></div>
-
-        <label class="row" for="is-remote">
-          <input id="is-remote" name="is_remote" type="checkbox" />
-          Remote
-        </label>
 
         <label for="job-description">
           Description
@@ -311,10 +314,6 @@
       </form>
 
       <footer>
-        <div class="row">
-          <button id="extract-button" type="button">Re-extract</button>
-          <button id="manual-entry-button" type="button">Enter manually</button>
-        </div>
         <div class="row">
           <button id="export-button" type="button">Export JSON-LD</button>
           <button id="save-button" type="button">Save Job</button>

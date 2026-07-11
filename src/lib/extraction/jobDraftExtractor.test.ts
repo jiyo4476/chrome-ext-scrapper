@@ -497,8 +497,8 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
   it('extracts company_name from the employer profile link', async () => {
     setBody(`
       <h1>Senior Software Engineer</h1>
-      <a href="https://www.linkedin.com/company/acme-corp/life">Acme Corp</a>
       <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/life">Acme Corp</a>
         <p><span>Austin, TX</span></p>
         <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
       </div>
@@ -508,6 +508,26 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
 
     expect(draft.company_name).toBe('Acme Corp');
     expect(draft.job_location).toBe('Austin, TX');
+  });
+
+  it('extracts LinkedIn company_name from the selected last lazy column', async () => {
+    document.title = 'Software Engineer jobs in United States | LinkedIn';
+    setBody(`
+      <h1>Software Engineer jobs in United States</h1>
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/wrong-company/">Wrong Company</a>
+        <p><span>San Francisco Bay Area</span></p>
+      </div>
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/life">Acme Corp</a>
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.company_name).toBe('Acme Corp');
   });
 
   it('resolves the company link after it appears asynchronously', async () => {
@@ -521,8 +541,7 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
       // resolving.
       setBody(
         document.body.innerHTML +
-          '<a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>' +
-          '<div data-testid="lazy-column"><p><span>Austin, TX</span></p><div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div></div>',
+          '<div data-testid="lazy-column"><a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a><p><span>Austin, TX</span></p><div class="jobs-description"><h2>About the job</h2><p>Build great things.</p></div></div>',
       );
     }, 0);
 

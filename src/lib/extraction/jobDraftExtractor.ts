@@ -506,6 +506,14 @@ export async function extractJobDraft(detection: {
     return heading ?? undefined;
   }
 
+  function findLinkedinCompany(): Element | undefined {
+    const root = findLastLinkedinLazyColumn() ?? document;
+    return (
+      root.querySelector('a[href^="https://www.linkedin.com/company/"]') ??
+      undefined
+    );
+  }
+
   function linkedinLocationScore(text: string): number {
     const normalized = text.toLowerCase();
     if (
@@ -650,16 +658,13 @@ export async function extractJobDraft(detection: {
     // the only stable, hash-free DOM selector on LinkedIn's job pages, and
     // covers cases where <title> doesn't follow the pipe-delimited pattern
     // (e.g. a split-view search results page that hasn't navigated to a
-    // dedicated job URL). job_location and job_description have no
-    // page-title source at all, so their DOM selectors (rendered after the
-    // SPA hydrates) are the only signal available -- wait on all three
-    // together in one observer.
+    // dedicated job URL). Scope it to the selected lazy column so search
+    // result cards do not leak into the active job. job_location and
+    // job_description have no page-title source at all, so their DOM
+    // selectors (rendered after the SPA hydrates) are the only signal
+    // available -- wait on all three together in one observer.
     const [companyEl, locationEl, descriptionEl] = await waitForEach(
-      [
-        bySelector(['a[href^="https://www.linkedin.com/company/"]']),
-        findLinkedinLocation,
-        findAboutTheJobHeading,
-      ],
+      [findLinkedinCompany, findLinkedinLocation, findAboutTheJobHeading],
       800,
     );
     addCandidate('company_name', textOf(companyEl), 'dom', 'high');
