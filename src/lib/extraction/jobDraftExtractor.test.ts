@@ -56,7 +56,7 @@ describe('extractJobDraft — JSON-LD source', () => {
     expect(draft.job_title).toBe('Data Engineer');
     expect(draft.company_name).toBe('Data Co');
     expect(draft.date_posted).toBe('2026-07-01');
-    expect(draft.job_description).toBe('Build data pipelines.');
+    expect(draft.job_description).toBe('Build **data** pipelines.');
     expect(draft.job_link).toBe('https://example.com/jobs/data-engineer');
     expect(draft.external_job_id).toBe('job-42');
     expect(draft.job_type).toBe('full_time');
@@ -67,6 +67,39 @@ describe('extractJobDraft — JSON-LD source', () => {
     // job_title only has a single jsonld candidate here (h1 text matches
     // exactly, so it collapses to one distinct value) -- no picker needed.
     expect(candidates.company_name).toBeUndefined();
+  });
+
+  it('sanitizes active content and unsafe links before converting HTML to Markdown', async () => {
+    const jsonLd = document.createElement('script');
+    jsonLd.type = 'application/ld+json';
+    jsonLd.textContent = JSON.stringify({
+      '@type': 'JobPosting',
+      title: 'Security Engineer',
+      description:
+        '<h2>Responsibilities</h2><p>Build <em>safe</em> tools.</p><ul><li>Review code<ul><li>Check dependencies</li></ul></li><li><a href="https://example.com/jobs/42">Ship fixes</a></li></ul><script>alert(1)</script><iframe src="https://evil.example"></iframe><p><a href="javascript:alert(1)">Unsafe link</a></p>',
+    });
+    document.head.append(jsonLd);
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_description).toBe(
+      '## Responsibilities\n\nBuild *safe* tools.\n\n- Review code\n  - Check dependencies\n- [Ship fixes](https://example.com/jobs/42)\n\nUnsafe link',
+    );
+    expect(draft.job_description).not.toContain('alert');
+    expect(draft.job_description).not.toContain('evil.example');
+  });
+
+  it('escapes raw HTML-like text from metadata before storing Markdown', async () => {
+    setHead(
+      '<meta name="description" content="Use &lt;script&gt;alert(1)&lt;/script&gt; and [review] notes." />',
+    );
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_description).toBe(
+      'Use \\<script\\>alert(1)\\</script\\> and \\[review\\] notes.',
+    );
+    expect(draft.job_description).not.toContain('<script>');
   });
 
   it('marks TELECOMMUTE jobLocationType as remote', async () => {
@@ -358,6 +391,15 @@ describe('extractJobDraft — visible-text fallback', () => {
       'This role has no structured data at all, just plain text.',
     );
     expect(draft.extraction_confidence?.job_title).toBe('low');
+  });
+
+  it('escapes HTML-like plain text in the visible-text fallback', async () => {
+    setBody('<main>&lt;img src=x onerror=alert(1)&gt;</main>');
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_description).toBe('\\<img src=x onerror=alert(1)\\>');
+    expect(draft.job_description).not.toMatch(/(^|\n)\s*<img/);
   });
 });
 
@@ -916,6 +958,26 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
       'meta',
       'visible-text',
     ]);
+  });
+
+  it('preserves safe description structure as Markdown and drops page-controlled executable content', async () => {
+    setBody(`
+      <h1 class="jobsearch-JobInfoHeader-title">Backend Engineer</h1>
+      <div id="jobDescriptionText">
+        <h2>Requirements</h2>
+        <ul><li><strong>TypeScript</strong></li><li>SQL</li></ul>
+        <img src=x onerror="alert(1)" alt="tracking pixel">
+        <script>alert(2)</script>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(INDEED);
+
+    expect(draft.job_description).toBe(
+      '## Requirements\n\n- **TypeScript**\n- SQL',
+    );
+    expect(draft.job_description).not.toContain('alert');
+    expect(draft.job_description).not.toContain('onerror');
   });
 
   it('resolves the Indeed title after it appears asynchronously', async () => {

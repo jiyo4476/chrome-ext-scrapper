@@ -69,11 +69,152 @@ export async function extractJobDraft(detection: {
     return undefined;
   }
 
-  function stripHtml(html: string): string {
+  function htmlToSafeMarkdown(html: string): string {
     const container = document.createElement('div');
     container.innerHTML = html;
-    const text = container.textContent ?? '';
-    return text.replace(/\s+/g, ' ').trim();
+    return elementToSafeMarkdown(container);
+  }
+
+  function plainTextToSafeMarkdown(text: string): string {
+    const container = document.createElement('div');
+    container.textContent = text;
+    return elementToSafeMarkdown(container);
+  }
+
+  function elementToSafeMarkdown(root: Element): string {
+    // Sanitize by construction: page-controlled elements and attributes are
+    // never serialized. Only semantic text formatting is emitted, and links
+    // must pass the explicit protocol allowlist before becoming Markdown.
+    const droppedElements = new Set([
+      'SCRIPT',
+      'STYLE',
+      'NOSCRIPT',
+      'TEMPLATE',
+      'IFRAME',
+      'OBJECT',
+      'EMBED',
+      'SVG',
+      'MATH',
+      'CANVAS',
+      'FORM',
+      'INPUT',
+      'BUTTON',
+      'SELECT',
+      'OPTION',
+      'TEXTAREA',
+    ]);
+
+    function escapeMarkdown(text: string): string {
+      return text.replace(/\\/g, '\\\\').replace(/([`*_[\]<>])/g, '\\$1');
+    }
+
+    function safeLink(raw: string | null): string | undefined {
+      if (!raw) return undefined;
+      try {
+        const url = new URL(raw, location.href);
+        return ['http:', 'https:', 'mailto:'].includes(url.protocol)
+          ? url.href
+          : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+
+    function render(node: Node): string {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return escapeMarkdown(node.textContent ?? '');
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+      const element = node as Element;
+      if (droppedElements.has(element.tagName)) return '';
+
+      const content = Array.from(element.childNodes).map(render).join('');
+      switch (element.tagName) {
+        case 'H1':
+          return `\n\n# ${content}\n\n`;
+        case 'H2':
+          return `\n\n## ${content}\n\n`;
+        case 'H3':
+          return `\n\n### ${content}\n\n`;
+        case 'H4':
+        case 'H5':
+        case 'H6':
+          return `\n\n#### ${content}\n\n`;
+        case 'P':
+        case 'DIV':
+        case 'SECTION':
+        case 'ARTICLE':
+          return `\n\n${content}\n\n`;
+        case 'BR':
+          return '  \n';
+        case 'STRONG':
+        case 'B':
+          return content.trim() ? `**${content.trim()}**` : '';
+        case 'EM':
+        case 'I':
+          return content.trim() ? `*${content.trim()}*` : '';
+        case 'PRE':
+          return content.trim()
+            ? `\n\n\`\`\`\n${content.trim()}\n\`\`\`\n\n`
+            : '';
+        case 'CODE':
+          return content.trim()
+            ? `\`${content.trim().replace(/`/g, '\\`')}\``
+            : '';
+        case 'LI': {
+          const parent = element.parentElement;
+          const ordered = parent?.tagName === 'OL';
+          const index = ordered
+            ? Array.from(parent.children).indexOf(element) + 1
+            : 0;
+          const itemContent = Array.from(element.childNodes)
+            .filter(
+              (child) =>
+                child.nodeType !== Node.ELEMENT_NODE ||
+                !['UL', 'OL'].includes((child as Element).tagName),
+            )
+            .map(render)
+            .join('')
+            .trim();
+          const nestedContent = Array.from(element.children)
+            .filter((child) => ['UL', 'OL'].includes(child.tagName))
+            .map(render)
+            .join('')
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => `  ${line}`)
+            .join('\n');
+          return `\n${ordered ? `${String(index)}.` : '-'} ${itemContent}${nestedContent ? `\n${nestedContent}` : ''}`;
+        }
+        case 'UL':
+        case 'OL':
+          return `\n${content.trim()}\n`;
+        case 'BLOCKQUOTE':
+          return `\n\n${content
+            .trim()
+            .split('\n')
+            .map((line) => `> ${line}`)
+            .join('\n')}\n\n`;
+        case 'A': {
+          const href = safeLink(element.getAttribute('href'));
+          const label = content.trim();
+          return href && label ? `[${label}](${href})` : label;
+        }
+        default:
+          return content;
+      }
+    }
+
+    return Array.from(root.childNodes)
+      .map(render)
+      .join('')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n[ \t]+(?=\n|$)/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/(?<=\S)[ \t]{2,}/g, ' ')
+      .trim();
   }
 
   function normalizeDate(raw: string): string | undefined {
@@ -417,7 +558,12 @@ export async function extractJobDraft(detection: {
       800,
     );
     addCandidate('job_title', textOf(titleEl), 'dom', 'high');
-    addCandidate('job_description', textOf(descriptionEl), 'dom', 'high');
+    addCandidate(
+      'job_description',
+      descriptionEl ? elementToSafeMarkdown(descriptionEl) : undefined,
+      'dom',
+      'high',
+    );
 
     addCandidate(
       'company_name',
@@ -454,7 +600,12 @@ export async function extractJobDraft(detection: {
       800,
     );
     addCandidate('job_title', textOf(titleEl), 'dom', 'high');
-    addCandidate('job_description', textOf(descriptionEl), 'dom', 'high');
+    addCandidate(
+      'job_description',
+      descriptionEl ? elementToSafeMarkdown(descriptionEl) : undefined,
+      'dom',
+      'high',
+    );
 
     addCandidate(
       'company_name',
@@ -507,7 +658,12 @@ export async function extractJobDraft(detection: {
     );
 
     addCandidate('job_title', textOf(titleEl), 'dom', 'high');
-    addCandidate('job_description', textOf(descriptionEl), 'dom', 'high');
+    addCandidate(
+      'job_description',
+      descriptionEl ? elementToSafeMarkdown(descriptionEl) : undefined,
+      'dom',
+      'high',
+    );
     addCandidate(
       'company_name',
       textOf(
@@ -651,7 +807,9 @@ export async function extractJobDraft(detection: {
   // container that also includes adjacent sections. Read text after the
   // heading in document order, stopping at the next same-or-higher-level
   // heading, so neighboring sections do not leak into job_description.
-  function descriptionTextAfterHeading(heading: Element): string | undefined {
+  function descriptionMarkdownAfterHeading(
+    heading: Element,
+  ): string | undefined {
     const startLevel = headingLevel(heading) ?? 2;
     for (
       let boundary = heading.parentElement;
@@ -698,8 +856,8 @@ export async function extractJobDraft(detection: {
         if (text) parts.push(text);
       }
 
-      const text = parts.join(' ').replace(/\s+/g, ' ').trim();
-      if (text) return text;
+      const markdown = plainTextToSafeMarkdown(parts.join(' '));
+      if (markdown) return markdown;
     }
     return undefined;
   }
@@ -729,7 +887,9 @@ export async function extractJobDraft(detection: {
     addCandidate('job_location', textOf(locationEl), 'dom', 'medium');
     addCandidate(
       'job_description',
-      descriptionEl ? descriptionTextAfterHeading(descriptionEl) : undefined,
+      descriptionEl
+        ? descriptionMarkdownAfterHeading(descriptionEl)
+        : undefined,
       'dom',
       'high',
     );
@@ -856,7 +1016,12 @@ export async function extractJobDraft(detection: {
       // in the merge step, not lose to it.
       addCandidate(
         'job_description',
-        textOf(container.querySelector('section, [role="article"]')),
+        (() => {
+          const description = container.querySelector(
+            'section, [role="article"]',
+          );
+          return description ? elementToSafeMarkdown(description) : undefined;
+        })(),
         'dom',
         'medium',
       );
@@ -890,7 +1055,12 @@ export async function extractJobDraft(detection: {
 
     const description = jobPosting.description;
     if (typeof description === 'string') {
-      addCandidate('job_description', stripHtml(description), 'jsonld', 'high');
+      addCandidate(
+        'job_description',
+        htmlToSafeMarkdown(description),
+        'jsonld',
+        'high',
+      );
     }
 
     const datePosted = jobPosting.datePosted;
@@ -954,7 +1124,12 @@ export async function extractJobDraft(detection: {
     document
       .querySelector<HTMLMetaElement>('meta[name="description"]')
       ?.content?.trim() || metaContent('og:description');
-  addCandidate('job_description', metaDescription, 'meta', 'medium');
+  addCandidate(
+    'job_description',
+    metaDescription ? plainTextToSafeMarkdown(metaDescription) : undefined,
+    'meta',
+    'medium',
+  );
 
   // og:site_name is the *hosting site's own* brand (e.g. "Indeed",
   // "Glassdoor") on aggregator job boards, not the employer -- only trust it
@@ -1032,7 +1207,12 @@ export async function extractJobDraft(detection: {
     ?.replace(/\s+/g, ' ')
     .trim()
     .slice(0, 5000);
-  addCandidate('job_description', bodyText, 'visible-text', 'low');
+  addCandidate(
+    'job_description',
+    bodyText ? plainTextToSafeMarkdown(bodyText) : undefined,
+    'visible-text',
+    'low',
+  );
 
   // --- merge candidates into a single best-guess draft ---------------------
   // 'dom' ranks above 'jsonld' as a tiebreak: a platform DOM extractor only
