@@ -953,7 +953,10 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
       <div id="jobDescriptionText">Build reliable systems.</div>
     `);
 
-    const { draft } = await extractJobDraft(INDEED);
+    const { draft } = await extractJobDraft({
+      ...INDEED,
+      externalJobId: 'selected-123',
+    });
 
     expect(draft.external_job_id).toBe('selected-123');
   });

@@ -20,6 +20,7 @@ import type { ApiSourcePlatform, JobDraft } from '../schemas';
 export async function extractJobDraft(detection: {
   platform: ApiSourcePlatform;
   confidence: 'high' | 'low';
+  externalJobId?: string;
 }): Promise<{
   draft: JobDraft;
   candidates: Partial<
@@ -385,9 +386,6 @@ export async function extractJobDraft(detection: {
 
   function inferExternalId(url: string, title?: string): string {
     const parsed = new URL(url);
-    const indeedKey =
-      parsed.searchParams.get('jk') ?? parsed.searchParams.get('vjk');
-    if (indeedKey) return indeedKey;
 
     const pathId = parsed.pathname.split('/').filter(Boolean).at(-1);
     if (pathId) return pathId.replace(/[^a-zA-Z0-9_-]/g, '-');
@@ -502,7 +500,7 @@ export async function extractJobDraft(detection: {
           undefined,
         () =>
           detailRoot.querySelector(
-            '[data-testid="job-description"], [data-cy="job-description"], article',
+            '[data-testid="job-description"], [data-cy="job-description"], [class*="job-description"], [class*="jobDescription"]',
           ) ?? undefined,
       ],
       800,
@@ -999,7 +997,7 @@ export async function extractJobDraft(detection: {
     document.title || document.querySelector('h1')?.textContent || undefined;
   addCandidate(
     'external_job_id',
-    inferExternalId(href, titleForId),
+    detection.externalJobId ?? inferExternalId(href, titleForId),
     'url',
     'medium',
   );

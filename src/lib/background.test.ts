@@ -163,7 +163,13 @@ describe('background save flow', () => {
     });
     expect(browserMock.scripting.executeScript).toHaveBeenCalledWith(
       expect.objectContaining({
-        args: [{ platform: 'indeed', confidence: 'high' }],
+        args: [
+          {
+            platform: 'indeed',
+            confidence: 'high',
+            externalJobId: 'abc123',
+          },
+        ],
       }),
     );
   });
