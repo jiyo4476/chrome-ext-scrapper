@@ -1,21 +1,128 @@
+import DOMPurify from 'dompurify';
+import TurndownService from 'turndown';
 import type { ApiSourcePlatform, JobDraft } from '../schemas';
+
+// '#text' must be listed explicitly alongside KEEP_CONTENT: false below --
+// without it, DOMPurify treats bare text nodes as unlisted too and strips
+// all of them, not just the content of actually-disallowed elements like
+// <script>.
+const DESCRIPTION_TAGS = [
+  '#text',
+  'a',
+  'article',
+  'b',
+  'blockquote',
+  'br',
+  'code',
+  'div',
+  'em',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'i',
+  'li',
+  'ol',
+  'p',
+  'pre',
+  'section',
+  'strong',
+  'ul',
+];
+
+function normalizeMarkdown(markdown: string): string {
+  return markdown
+    .split('\n')
+    .map((line) => (line.endsWith('  ') ? line : line.replace(/[ \t]+$/, '')))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function htmlToSafeMarkdown(html: string): string {
+  const sanitized = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: DESCRIPTION_TAGS,
+    ALLOWED_ATTR: ['href'],
+    ALLOW_DATA_ATTR: false,
+    ALLOW_ARIA_ATTR: false,
+    KEEP_CONTENT: false,
+  });
+  const container = document.createElement('div');
+  container.innerHTML = sanitized;
+
+  for (const link of container.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+    try {
+      const url = new URL(link.getAttribute('href') ?? '', location.href);
+      if (!['http:', 'https:', 'mailto:'].includes(url.protocol)) {
+        link.removeAttribute('href');
+      } else {
+        link.href = url.href;
+      }
+    } catch {
+      link.removeAttribute('href');
+    }
+  }
+
+  const turndown = new TurndownService({
+    bulletListMarker: '-',
+    codeBlockStyle: 'fenced',
+    emDelimiter: '*',
+    headingStyle: 'atx',
+    strongDelimiter: '**',
+  });
+
+  // Turndown pads list markers to 4 columns (e.g. "-   item") to line up
+  // continuation lines under a 4-space indent; override with a single space
+  // so plain lists don't come out with distractingly wide gaps.
+  turndown.addRule('listItem', {
+    filter: 'li',
+    replacement(content, node, options) {
+      const parent = node.parentNode as Element | null;
+      let prefix = `${options.bulletListMarker ?? '-'} `;
+      if (parent?.nodeName === 'OL') {
+        const start = parent.getAttribute('start');
+        const index = Array.prototype.indexOf.call(parent.children, node);
+        const number = start ? Number(start) + index : index + 1;
+        prefix = `${String(number)}. `;
+      }
+      const isParagraph = content.endsWith('\n');
+      const trimmed = content.replace(/^\n+/, '').replace(/\n+$/, '');
+      const body = trimmed + (isParagraph ? '\n' : '');
+      const indented = body.replace(/\n/gm, `\n${' '.repeat(prefix.length)}`);
+      return prefix + indented + (node.nextSibling ? '\n' : '');
+    },
+  });
+
+  // Turndown's default escaping only guards Markdown syntax characters, not
+  // `<`/`>` -- without escaping those too, sanitized-away tag text left over
+  // as plain text (e.g. "Use <script>...") would still read as raw,
+  // renderer-interpretable HTML once this Markdown is displayed downstream.
+  const defaultEscape = turndown.escape.bind(turndown);
+  turndown.escape = (text: string) =>
+    defaultEscape(text).replace(/</g, '\\<').replace(/>/g, '\\>');
+
+  return normalizeMarkdown(turndown.turndown(container));
+}
+
+function plainTextToSafeMarkdown(text: string): string {
+  const container = document.createElement('div');
+  container.textContent = text;
+  return htmlToSafeMarkdown(container.innerHTML);
+}
+
+function elementToSafeMarkdown(root: Element): string {
+  return htmlToSafeMarkdown(root.innerHTML);
+}
 
 /**
  * Extracts a best-guess {@link JobDraft} from the active page using JSON-LD
  * `JobPosting` markup, OpenGraph/meta tags, platform-specific DOM selectors,
  * the page URL, and finally visible text as a last-resort fallback.
  *
- * IMPORTANT: this function is passed directly to
- * `browser.scripting.executeScript({ func: extractJobDraft, args: [detection] })`,
- * which stringifies the function body and injects it into the page. It must
- * not reference any binding from outside its own body/params other than page
- * globals (`document`, `window`, `location`). Only type-only imports are
- * allowed at the module level because those are erased at compile time.
- *
- * The platform is pre-detected in the background worker (which has `tab.url`
- * available without injection) and passed in as `detection` — this function
- * trusts it entirely rather than re-detecting from `location`, since
- * background already saw the same URL.
+ * Runs from the locally bundled runtime content script in the MV3 isolated
+ * world so the DOMPurify and Turndown browser dependencies remain available.
  */
 export async function extractJobDraft(detection: {
   platform: ApiSourcePlatform;
@@ -67,154 +174,6 @@ export async function extractJobDraft(detection: {
       if (!Number.isNaN(parsed)) return parsed;
     }
     return undefined;
-  }
-
-  function htmlToSafeMarkdown(html: string): string {
-    const container = document.createElement('div');
-    container.innerHTML = html;
-    return elementToSafeMarkdown(container);
-  }
-
-  function plainTextToSafeMarkdown(text: string): string {
-    const container = document.createElement('div');
-    container.textContent = text;
-    return elementToSafeMarkdown(container);
-  }
-
-  function elementToSafeMarkdown(root: Element): string {
-    // Sanitize by construction: page-controlled elements and attributes are
-    // never serialized. Only semantic text formatting is emitted, and links
-    // must pass the explicit protocol allowlist before becoming Markdown.
-    const droppedElements = new Set([
-      'SCRIPT',
-      'STYLE',
-      'NOSCRIPT',
-      'TEMPLATE',
-      'IFRAME',
-      'OBJECT',
-      'EMBED',
-      'SVG',
-      'MATH',
-      'CANVAS',
-      'FORM',
-      'INPUT',
-      'BUTTON',
-      'SELECT',
-      'OPTION',
-      'TEXTAREA',
-    ]);
-
-    function escapeMarkdown(text: string): string {
-      return text.replace(/\\/g, '\\\\').replace(/([`*_[\]<>])/g, '\\$1');
-    }
-
-    function safeLink(raw: string | null): string | undefined {
-      if (!raw) return undefined;
-      try {
-        const url = new URL(raw, location.href);
-        return ['http:', 'https:', 'mailto:'].includes(url.protocol)
-          ? url.href
-          : undefined;
-      } catch {
-        return undefined;
-      }
-    }
-
-    function render(node: Node): string {
-      if (node.nodeType === Node.TEXT_NODE) {
-        return escapeMarkdown(node.textContent ?? '');
-      }
-      if (node.nodeType !== Node.ELEMENT_NODE) return '';
-
-      const element = node as Element;
-      if (droppedElements.has(element.tagName)) return '';
-
-      const content = Array.from(element.childNodes).map(render).join('');
-      switch (element.tagName) {
-        case 'H1':
-          return `\n\n# ${content}\n\n`;
-        case 'H2':
-          return `\n\n## ${content}\n\n`;
-        case 'H3':
-          return `\n\n### ${content}\n\n`;
-        case 'H4':
-        case 'H5':
-        case 'H6':
-          return `\n\n#### ${content}\n\n`;
-        case 'P':
-        case 'DIV':
-        case 'SECTION':
-        case 'ARTICLE':
-          return `\n\n${content}\n\n`;
-        case 'BR':
-          return '  \n';
-        case 'STRONG':
-        case 'B':
-          return content.trim() ? `**${content.trim()}**` : '';
-        case 'EM':
-        case 'I':
-          return content.trim() ? `*${content.trim()}*` : '';
-        case 'PRE':
-          return content.trim()
-            ? `\n\n\`\`\`\n${content.trim()}\n\`\`\`\n\n`
-            : '';
-        case 'CODE':
-          return content.trim()
-            ? `\`${content.trim().replace(/`/g, '\\`')}\``
-            : '';
-        case 'LI': {
-          const parent = element.parentElement;
-          const ordered = parent?.tagName === 'OL';
-          const index = ordered
-            ? Array.from(parent.children).indexOf(element) + 1
-            : 0;
-          const itemContent = Array.from(element.childNodes)
-            .filter(
-              (child) =>
-                child.nodeType !== Node.ELEMENT_NODE ||
-                !['UL', 'OL'].includes((child as Element).tagName),
-            )
-            .map(render)
-            .join('')
-            .trim();
-          const nestedContent = Array.from(element.children)
-            .filter((child) => ['UL', 'OL'].includes(child.tagName))
-            .map(render)
-            .join('')
-            .trim()
-            .split('\n')
-            .filter(Boolean)
-            .map((line) => `  ${line}`)
-            .join('\n');
-          return `\n${ordered ? `${String(index)}.` : '-'} ${itemContent}${nestedContent ? `\n${nestedContent}` : ''}`;
-        }
-        case 'UL':
-        case 'OL':
-          return `\n${content.trim()}\n`;
-        case 'BLOCKQUOTE':
-          return `\n\n${content
-            .trim()
-            .split('\n')
-            .map((line) => `> ${line}`)
-            .join('\n')}\n\n`;
-        case 'A': {
-          const href = safeLink(element.getAttribute('href'));
-          const label = content.trim();
-          return href && label ? `[${label}](${href})` : label;
-        }
-        default:
-          return content;
-      }
-    }
-
-    return Array.from(root.childNodes)
-      .map(render)
-      .join('')
-      .replace(/[ \t]+\n/g, '\n')
-      .replace(/\n[ \t]+(?=\n|$)/g, '\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .replace(/(?<=\S)[ \t]{2,}/g, ' ')
-      .trim();
   }
 
   function normalizeDate(raw: string): string | undefined {

@@ -102,6 +102,39 @@ describe('extractJobDraft — JSON-LD source', () => {
     expect(draft.job_description).not.toContain('<script>');
   });
 
+  it('preserves a <br> as a Markdown hard line break', async () => {
+    const jsonLd = document.createElement('script');
+    jsonLd.type = 'application/ld+json';
+    jsonLd.textContent = JSON.stringify({
+      '@type': 'JobPosting',
+      title: 'Support Engineer',
+      description: '<p>Line one<br>Line two</p>',
+    });
+    document.head.append(jsonLd);
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_description).toBe('Line one  \nLine two');
+  });
+
+  it('escapes page text that mimics Markdown block syntax', async () => {
+    const jsonLd = document.createElement('script');
+    jsonLd.type = 'application/ld+json';
+    jsonLd.textContent = JSON.stringify({
+      '@type': 'JobPosting',
+      title: 'Support Engineer',
+      description:
+        '<p># Not a heading</p><p>- Not a bullet</p><p>1. Not a list item</p>',
+    });
+    document.head.append(jsonLd);
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_description).toBe(
+      '\\# Not a heading\n\n\\- Not a bullet\n\n1\\. Not a list item',
+    );
+  });
+
   it('marks TELECOMMUTE jobLocationType as remote', async () => {
     setHead(`
       <script type="application/ld+json">

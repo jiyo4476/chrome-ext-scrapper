@@ -17,6 +17,8 @@
     "postinstall": "wxt prepare"
   },
   "dependencies": {
+    "dompurify": "3.4.12",
+    "turndown": "7.2.4",
     "zod": "^3.25.76"
   },
   "overrides": {
@@ -27,6 +29,7 @@
   },
   "devDependencies": {
     "@types/chrome": "^0.0.326",
+    "@types/turndown": "5.0.6",
     "eslint": "^10.6.0",
     "globals": "^17.7.0",
     "jsdom": "^29.1.1",

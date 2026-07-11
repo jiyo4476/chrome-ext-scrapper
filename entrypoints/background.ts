@@ -15,7 +15,8 @@ import {
   detectPlatform,
   isAutoScrapeUrl,
 } from '../src/lib/extraction/detectPlatform';
-import { extractJobDraft } from '../src/lib/extraction/jobDraftExtractor';
+import type { extractJobDraft } from '../src/lib/extraction/jobDraftExtractor';
+import { JOB_DRAFT_EXTRACTOR_BRIDGE_KEY } from '../src/lib/extraction/jobDraftExtractorBridge';
 import { getValidAccessToken, signInWithAuthentik } from '../src/lib/oauth';
 import { buildScrapePayload } from '../src/lib/payload';
 import { type JobDraft, jobDraftSchema } from '../src/lib/schemas';
@@ -131,10 +132,30 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
   const detection = detectPlatform(tab.url ?? '');
 
   try {
+    // Two-step injection: load the real bundled content-script file first
+    // (so its `dompurify`/`turndown` imports actually resolve), then run a
+    // self-contained `func` in the same tab that reads the bridged function
+    // back off `window` and calls it with this request's `detection`. See
+    // `jobDraftExtractorBridge.ts` for why a single-step `func` won't work.
+    await browser.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['/content-scripts/content.js'],
+    });
+
+    const callBridgedExtractor = (
+      bridgeKey: string,
+      detectionArg: typeof detection,
+    ) => {
+      const extract = (window as unknown as Record<string, unknown>)[
+        bridgeKey
+      ] as typeof extractJobDraft | undefined;
+      return extract?.(detectionArg);
+    };
+
     const [result] = await browser.scripting.executeScript({
       target: { tabId: tab.id },
-      func: extractJobDraft,
-      args: [detection],
+      func: callBridgedExtractor,
+      args: [JOB_DRAFT_EXTRACTOR_BRIDGE_KEY, detection],
     });
 
     const extraction = result?.result;

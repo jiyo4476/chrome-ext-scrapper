@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { JOB_DRAFT_EXTRACTOR_BRIDGE_KEY } from './extraction/jobDraftExtractorBridge';
 
 const browserMock = vi.hoisted(() => ({
   runtime: {
@@ -161,9 +162,15 @@ describe('background save flow', () => {
       type: 'EXTRACT_ACTIVE_TAB_RESULT',
       ok: true,
     });
-    expect(browserMock.scripting.executeScript).toHaveBeenCalledWith(
+    expect(browserMock.scripting.executeScript).toHaveBeenNthCalledWith(1, {
+      target: { tabId: 1 },
+      files: ['/content-scripts/content.js'],
+    });
+    expect(browserMock.scripting.executeScript).toHaveBeenNthCalledWith(
+      2,
       expect.objectContaining({
         args: [
+          JOB_DRAFT_EXTRACTOR_BRIDGE_KEY,
           {
             platform: 'indeed',
             confidence: 'high',
