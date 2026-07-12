@@ -1,21 +1,171 @@
+import DOMPurify from 'dompurify';
+import TurndownService from 'turndown';
 import type { ApiSourcePlatform, JobDraft } from '../schemas';
+
+// '#text' must be listed explicitly alongside KEEP_CONTENT: false below --
+// without it, DOMPurify treats bare text nodes as unlisted too and strips
+// all of them, not just the content of actually-disallowed elements like
+// <script>.
+const DESCRIPTION_TAGS = [
+  '#text',
+  'a',
+  'article',
+  'b',
+  'blockquote',
+  'br',
+  'code',
+  'div',
+  'em',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'i',
+  'img',
+  'li',
+  'ol',
+  'p',
+  'pre',
+  'section',
+  'strong',
+  'ul',
+];
+
+// Preserve the text inside unrecognized presentation wrappers (for example
+// <span>, <mark>, or table cells) while removing both the element and content
+// of active/embedded controls. This avoids silently deleting meaningful job
+// description text without letting executable page content reach Turndown.
+const DESCRIPTION_FORBIDDEN_TAGS = [
+  'button',
+  'embed',
+  'form',
+  'iframe',
+  'input',
+  'math',
+  'noscript',
+  'object',
+  'option',
+  'script',
+  'select',
+  'style',
+  'svg',
+  'textarea',
+];
+
+function normalizeMarkdown(markdown: string): string {
+  return markdown
+    .split('\n')
+    .map((line) => (line.endsWith('  ') ? line : line.replace(/[ \t]+$/, '')))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// Built once at module scope: this configuration is stateless across calls,
+// and htmlToSafeMarkdown() can run several times per extraction (DOM/JSON-LD
+// /meta/visible-text candidates), so re-instantiating it per call is wasted
+// setup work.
+const turndown = new TurndownService({
+  bulletListMarker: '-',
+  codeBlockStyle: 'fenced',
+  emDelimiter: '*',
+  headingStyle: 'atx',
+  strongDelimiter: '**',
+});
+
+// Turndown pads list markers to 4 columns (e.g. "-   item") to line up
+// continuation lines under a 4-space indent; override with a single space
+// so plain lists don't come out with distractingly wide gaps.
+turndown.addRule('listItem', {
+  filter: 'li',
+  replacement(content, node, options) {
+    const parent = node.parentNode as Element | null;
+    let prefix = `${options.bulletListMarker ?? '-'} `;
+    if (parent?.nodeName === 'OL') {
+      const start = parent.getAttribute('start');
+      const index = Array.prototype.indexOf.call(parent.children, node);
+      const number = start ? Number(start) + index : index + 1;
+      prefix = `${String(number)}. `;
+    }
+    const isParagraph = content.endsWith('\n');
+    const trimmed = content.replace(/^\n+/, '').replace(/\n+$/, '');
+    const body = trimmed + (isParagraph ? '\n' : '');
+    const indented = body.replace(/\n/gm, `\n${' '.repeat(prefix.length)}`);
+    return prefix + indented + (node.nextSibling ? '\n' : '');
+  },
+});
+
+// `src` is never in ALLOWED_ATTR below, so an <img> only ever carries alt
+// text here -- surface that as plain text instead of Turndown's default
+// `![alt](src)` rule, which drops the alt text entirely when there's no src.
+turndown.addRule('image', {
+  filter: 'img',
+  replacement(_content, node) {
+    const alt = (node as Element).getAttribute('alt')?.trim();
+    return alt ? turndown.escape(alt) : '';
+  },
+});
+
+// Turndown's default escaping only guards Markdown syntax characters, not
+// `<`/`>` -- without escaping those too, sanitized-away tag text left over
+// as plain text (e.g. "Use <script>...") would still read as raw,
+// renderer-interpretable HTML once this Markdown is displayed downstream.
+const defaultEscape = turndown.escape.bind(turndown);
+turndown.escape = (text: string) =>
+  defaultEscape(text).replace(/</g, '\\<').replace(/>/g, '\\>');
+
+function htmlToSafeMarkdown(html: string | Node): string {
+  // RETURN_DOM_FRAGMENT hands back DOMPurify's own sanitized DOM tree
+  // directly, so the sanitized markup is never re-serialized to a string and
+  // reassigned via `innerHTML` -- there's no second HTML-parsing pass for a
+  // scanner (or a browser mXSS quirk) to find a gadget in.
+  const sanitizedFragment = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: DESCRIPTION_TAGS,
+    ALLOWED_ATTR: ['href', 'alt'],
+    FORBID_TAGS: DESCRIPTION_FORBIDDEN_TAGS,
+    ALLOW_DATA_ATTR: false,
+    ALLOW_ARIA_ATTR: false,
+    KEEP_CONTENT: true,
+    RETURN_DOM_FRAGMENT: true,
+  });
+
+  for (const link of sanitizedFragment.querySelectorAll<HTMLAnchorElement>(
+    'a[href]',
+  )) {
+    try {
+      const url = new URL(link.getAttribute('href') ?? '', document.baseURI);
+      if (!['http:', 'https:', 'mailto:'].includes(url.protocol)) {
+        link.removeAttribute('href');
+      } else {
+        link.href = url.href;
+      }
+    } catch {
+      link.removeAttribute('href');
+    }
+  }
+
+  return normalizeMarkdown(turndown.turndown(sanitizedFragment));
+}
+
+function plainTextToSafeMarkdown(text: string): string {
+  const container = document.createElement('div');
+  container.textContent = text;
+  return htmlToSafeMarkdown(container.innerHTML);
+}
+
+function elementToSafeMarkdown(root: Element): string {
+  return htmlToSafeMarkdown(root.innerHTML);
+}
 
 /**
  * Extracts a best-guess {@link JobDraft} from the active page using JSON-LD
  * `JobPosting` markup, OpenGraph/meta tags, platform-specific DOM selectors,
  * the page URL, and finally visible text as a last-resort fallback.
  *
- * IMPORTANT: this function is passed directly to
- * `browser.scripting.executeScript({ func: extractJobDraft, args: [detection] })`,
- * which stringifies the function body and injects it into the page. It must
- * not reference any binding from outside its own body/params other than page
- * globals (`document`, `window`, `location`). Only type-only imports are
- * allowed at the module level because those are erased at compile time.
- *
- * The platform is pre-detected in the background worker (which has `tab.url`
- * available without injection) and passed in as `detection` — this function
- * trusts it entirely rather than re-detecting from `location`, since
- * background already saw the same URL.
+ * Runs from the locally bundled runtime content script in the MV3 isolated
+ * world so the DOMPurify and Turndown browser dependencies remain available.
  */
 export async function extractJobDraft(detection: {
   platform: ApiSourcePlatform;
@@ -67,13 +217,6 @@ export async function extractJobDraft(detection: {
       if (!Number.isNaN(parsed)) return parsed;
     }
     return undefined;
-  }
-
-  function stripHtml(html: string): string {
-    const container = document.createElement('div');
-    container.innerHTML = html;
-    const text = container.textContent ?? '';
-    return text.replace(/\s+/g, ' ').trim();
   }
 
   function normalizeDate(raw: string): string | undefined {
@@ -417,7 +560,12 @@ export async function extractJobDraft(detection: {
       800,
     );
     addCandidate('job_title', textOf(titleEl), 'dom', 'high');
-    addCandidate('job_description', textOf(descriptionEl), 'dom', 'high');
+    addCandidate(
+      'job_description',
+      descriptionEl ? elementToSafeMarkdown(descriptionEl) : undefined,
+      'dom',
+      'high',
+    );
 
     addCandidate(
       'company_name',
@@ -454,7 +602,12 @@ export async function extractJobDraft(detection: {
       800,
     );
     addCandidate('job_title', textOf(titleEl), 'dom', 'high');
-    addCandidate('job_description', textOf(descriptionEl), 'dom', 'high');
+    addCandidate(
+      'job_description',
+      descriptionEl ? elementToSafeMarkdown(descriptionEl) : undefined,
+      'dom',
+      'high',
+    );
 
     addCandidate(
       'company_name',
@@ -507,7 +660,12 @@ export async function extractJobDraft(detection: {
     );
 
     addCandidate('job_title', textOf(titleEl), 'dom', 'high');
-    addCandidate('job_description', textOf(descriptionEl), 'dom', 'high');
+    addCandidate(
+      'job_description',
+      descriptionEl ? elementToSafeMarkdown(descriptionEl) : undefined,
+      'dom',
+      'high',
+    );
     addCandidate(
       'company_name',
       textOf(
@@ -651,57 +809,47 @@ export async function extractJobDraft(detection: {
   // container that also includes adjacent sections. Read text after the
   // heading in document order, stopping at the next same-or-higher-level
   // heading, so neighboring sections do not leak into job_description.
-  function descriptionTextAfterHeading(heading: Element): string | undefined {
+  function descriptionMarkdownAfterHeading(
+    heading: Element,
+  ): string | undefined {
     const startLevel = headingLevel(heading) ?? 2;
+    const scope =
+      findLastLinkedinLazyColumn() ??
+      heading.closest('article, section, main') ??
+      heading.parentElement;
+    let fallbackMarkdown: string | undefined;
+
     for (
       let boundary = heading.parentElement;
       boundary && boundary !== document.body.parentElement;
       boundary = boundary.parentElement
     ) {
-      const parts: string[] = [];
-      let afterHeading = false;
-      let stopped = false;
-      const walker = document.createTreeWalker(
-        boundary,
-        NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
-        {
-          acceptNode(node) {
-            if (stopped) return NodeFilter.FILTER_REJECT;
-            if (node === heading) {
-              afterHeading = true;
-              return NodeFilter.FILTER_REJECT;
-            }
-            if (!afterHeading) {
-              return node.nodeType === Node.ELEMENT_NODE
-                ? NodeFilter.FILTER_SKIP
-                : NodeFilter.FILTER_REJECT;
-            }
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              const level = headingLevel(node as Element);
-              if (level !== undefined && level <= startLevel) {
-                stopped = true;
-                return NodeFilter.FILTER_REJECT;
-              }
-              return NodeFilter.FILTER_SKIP;
-            }
-            return node.textContent?.trim()
-              ? NodeFilter.FILTER_ACCEPT
-              : NodeFilter.FILTER_REJECT;
-          },
-        },
+      const stopHeading = Array.from(
+        boundary.querySelectorAll('h1, h2, h3, h4, h5, h6'),
+      ).find(
+        (candidate) =>
+          candidate !== heading &&
+          Boolean(
+            heading.compareDocumentPosition(candidate) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+          ) &&
+          (headingLevel(candidate) ?? 7) <= startLevel,
       );
 
-      while (walker.nextNode()) {
-        const text = walker.currentNode.textContent
-          ?.replace(/\s+/g, ' ')
-          .trim();
-        if (text) parts.push(text);
+      const range = document.createRange();
+      range.setStartAfter(heading);
+      if (stopHeading) {
+        range.setEndBefore(stopHeading);
+      } else {
+        range.setEnd(boundary, boundary.childNodes.length);
       }
 
-      const text = parts.join(' ').replace(/\s+/g, ' ').trim();
-      if (text) return text;
+      const markdown = htmlToSafeMarkdown(range.cloneContents());
+      if (markdown) fallbackMarkdown = markdown;
+      if (stopHeading && markdown) return markdown;
+      if (boundary === scope) break;
     }
-    return undefined;
+    return fallbackMarkdown;
   }
 
   async function extractLinkedinDom(): Promise<void> {
@@ -729,7 +877,9 @@ export async function extractJobDraft(detection: {
     addCandidate('job_location', textOf(locationEl), 'dom', 'medium');
     addCandidate(
       'job_description',
-      descriptionEl ? descriptionTextAfterHeading(descriptionEl) : undefined,
+      descriptionEl
+        ? descriptionMarkdownAfterHeading(descriptionEl)
+        : undefined,
       'dom',
       'high',
     );
@@ -856,7 +1006,12 @@ export async function extractJobDraft(detection: {
       // in the merge step, not lose to it.
       addCandidate(
         'job_description',
-        textOf(container.querySelector('section, [role="article"]')),
+        (() => {
+          const description = container.querySelector(
+            'section, [role="article"]',
+          );
+          return description ? elementToSafeMarkdown(description) : undefined;
+        })(),
         'dom',
         'medium',
       );
@@ -890,7 +1045,12 @@ export async function extractJobDraft(detection: {
 
     const description = jobPosting.description;
     if (typeof description === 'string') {
-      addCandidate('job_description', stripHtml(description), 'jsonld', 'high');
+      addCandidate(
+        'job_description',
+        htmlToSafeMarkdown(description),
+        'jsonld',
+        'high',
+      );
     }
 
     const datePosted = jobPosting.datePosted;
@@ -954,7 +1114,12 @@ export async function extractJobDraft(detection: {
     document
       .querySelector<HTMLMetaElement>('meta[name="description"]')
       ?.content?.trim() || metaContent('og:description');
-  addCandidate('job_description', metaDescription, 'meta', 'medium');
+  addCandidate(
+    'job_description',
+    metaDescription ? plainTextToSafeMarkdown(metaDescription) : undefined,
+    'meta',
+    'medium',
+  );
 
   // og:site_name is the *hosting site's own* brand (e.g. "Indeed",
   // "Glassdoor") on aggregator job boards, not the employer -- only trust it
@@ -1032,7 +1197,12 @@ export async function extractJobDraft(detection: {
     ?.replace(/\s+/g, ' ')
     .trim()
     .slice(0, 5000);
-  addCandidate('job_description', bodyText, 'visible-text', 'low');
+  addCandidate(
+    'job_description',
+    bodyText ? plainTextToSafeMarkdown(bodyText) : undefined,
+    'visible-text',
+    'low',
+  );
 
   // --- merge candidates into a single best-guess draft ---------------------
   // 'dom' ranks above 'jsonld' as a tiebreak: a platform DOM extractor only
