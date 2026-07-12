@@ -96,19 +96,24 @@ turndown.escape = (text: string) =>
   defaultEscape(text).replace(/</g, '\\<').replace(/>/g, '\\>');
 
 function htmlToSafeMarkdown(html: string): string {
-  const sanitized = DOMPurify.sanitize(html, {
+  // RETURN_DOM_FRAGMENT hands back DOMPurify's own sanitized DOM tree
+  // directly, so the sanitized markup is never re-serialized to a string and
+  // reassigned via `innerHTML` -- there's no second HTML-parsing pass for a
+  // scanner (or a browser mXSS quirk) to find a gadget in.
+  const sanitizedFragment = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: DESCRIPTION_TAGS,
     ALLOWED_ATTR: ['href', 'alt'],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
     KEEP_CONTENT: false,
+    RETURN_DOM_FRAGMENT: true,
   });
-  const container = document.createElement('div');
-  container.innerHTML = sanitized;
 
-  for (const link of container.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+  for (const link of sanitizedFragment.querySelectorAll<HTMLAnchorElement>(
+    'a[href]',
+  )) {
     try {
-      const url = new URL(link.getAttribute('href') ?? '', location.href);
+      const url = new URL(link.getAttribute('href') ?? '', document.baseURI);
       if (!['http:', 'https:', 'mailto:'].includes(url.protocol)) {
         link.removeAttribute('href');
       } else {
@@ -119,7 +124,7 @@ function htmlToSafeMarkdown(html: string): string {
     }
   }
 
-  return normalizeMarkdown(turndown.turndown(container));
+  return normalizeMarkdown(turndown.turndown(sanitizedFragment));
 }
 
 function plainTextToSafeMarkdown(text: string): string {
