@@ -89,6 +89,26 @@ describe('extractJobDraft — JSON-LD source', () => {
     expect(draft.job_description).not.toContain('evil.example');
   });
 
+  it('preserves text inside benign wrappers and unsupported table structure', async () => {
+    const jsonLd = document.createElement('script');
+    jsonLd.type = 'application/ld+json';
+    jsonLd.textContent = JSON.stringify({
+      '@type': 'JobPosting',
+      title: 'Platform Engineer',
+      description:
+        '<p>Use <span>TypeScript</span> for <mark>important</mark> work.</p><table><tr><td>Salary</td><td>$100k</td></tr></table>',
+    });
+    document.head.append(jsonLd);
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_description).toContain(
+      'Use TypeScript for important work.',
+    );
+    expect(draft.job_description).toContain('Salary');
+    expect(draft.job_description).toContain('$100k');
+  });
+
   it('escapes raw HTML-like text from metadata before storing Markdown', async () => {
     setHead(
       '<meta name="description" content="Use &lt;script&gt;alert(1)&lt;/script&gt; and [review] notes." />',
@@ -834,7 +854,7 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     const { draft } = await extractJobDraft(LINKEDIN);
 
     expect(draft.job_description).toBe(
-      'Build reliable product systems. Responsibilities Own backend services.',
+      'Build reliable product systems.\n\n### Responsibilities\n\nOwn backend services.',
     );
     expect(draft.job_description).not.toContain('About the company');
     expect(draft.job_description).not.toContain('Acme was founded');
@@ -858,6 +878,30 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     const { draft } = await extractJobDraft(LINKEDIN);
 
     expect(draft.job_description).toBe('Build reliable product systems.');
+  });
+
+  it('preserves LinkedIn description structure as Markdown', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <div data-testid="lazy-column">
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-details">
+          <h2>About the job</h2>
+          <p>Build <strong>reliable</strong> systems.</p>
+          <ul><li>Review code</li><li><a href="https://example.com/team">Mentor engineers</a></li></ul>
+          <h2>About the company</h2>
+          <p>Company profile text.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe(
+      'Build **reliable** systems.\n\n- Review code\n- [Mentor engineers](https://example.com/team)',
+    );
+    expect(draft.job_description).not.toContain('About the company');
+    expect(draft.job_description).not.toContain('Company profile text');
   });
 
   it('extracts LinkedIn job_description from a search split-view details pane only', async () => {
@@ -903,7 +947,7 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     const { draft } = await extractJobDraft(LINKEDIN);
 
     expect(draft.job_description).toBe(
-      'Build reliable product systems. What you will do Improve the selected job workflow.',
+      'Build reliable product systems.\n\n### What you will do\n\nImprove the selected job workflow.',
     );
     expect(draft.job_location).toBe('Austin, TX');
     expect(draft.job_description).not.toContain('Search result card teaser');

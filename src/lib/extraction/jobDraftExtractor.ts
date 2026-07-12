@@ -33,6 +33,27 @@ const DESCRIPTION_TAGS = [
   'ul',
 ];
 
+// Preserve the text inside unrecognized presentation wrappers (for example
+// <span>, <mark>, or table cells) while removing both the element and content
+// of active/embedded controls. This avoids silently deleting meaningful job
+// description text without letting executable page content reach Turndown.
+const DESCRIPTION_FORBIDDEN_TAGS = [
+  'button',
+  'embed',
+  'form',
+  'iframe',
+  'input',
+  'math',
+  'noscript',
+  'object',
+  'option',
+  'script',
+  'select',
+  'style',
+  'svg',
+  'textarea',
+];
+
 function normalizeMarkdown(markdown: string): string {
   return markdown
     .split('\n')
@@ -95,7 +116,7 @@ const defaultEscape = turndown.escape.bind(turndown);
 turndown.escape = (text: string) =>
   defaultEscape(text).replace(/</g, '\\<').replace(/>/g, '\\>');
 
-function htmlToSafeMarkdown(html: string): string {
+function htmlToSafeMarkdown(html: string | Node): string {
   // RETURN_DOM_FRAGMENT hands back DOMPurify's own sanitized DOM tree
   // directly, so the sanitized markup is never re-serialized to a string and
   // reassigned via `innerHTML` -- there's no second HTML-parsing pass for a
@@ -103,9 +124,10 @@ function htmlToSafeMarkdown(html: string): string {
   const sanitizedFragment = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: DESCRIPTION_TAGS,
     ALLOWED_ATTR: ['href', 'alt'],
+    FORBID_TAGS: DESCRIPTION_FORBIDDEN_TAGS,
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
-    KEEP_CONTENT: false,
+    KEEP_CONTENT: true,
     RETURN_DOM_FRAGMENT: true,
   });
 
@@ -796,47 +818,27 @@ export async function extractJobDraft(detection: {
       boundary && boundary !== document.body.parentElement;
       boundary = boundary.parentElement
     ) {
-      const parts: string[] = [];
-      let afterHeading = false;
-      let stopped = false;
-      const walker = document.createTreeWalker(
-        boundary,
-        NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
-        {
-          acceptNode(node) {
-            if (stopped) return NodeFilter.FILTER_REJECT;
-            if (node === heading) {
-              afterHeading = true;
-              return NodeFilter.FILTER_REJECT;
-            }
-            if (!afterHeading) {
-              return node.nodeType === Node.ELEMENT_NODE
-                ? NodeFilter.FILTER_SKIP
-                : NodeFilter.FILTER_REJECT;
-            }
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              const level = headingLevel(node as Element);
-              if (level !== undefined && level <= startLevel) {
-                stopped = true;
-                return NodeFilter.FILTER_REJECT;
-              }
-              return NodeFilter.FILTER_SKIP;
-            }
-            return node.textContent?.trim()
-              ? NodeFilter.FILTER_ACCEPT
-              : NodeFilter.FILTER_REJECT;
-          },
-        },
+      const stopHeading = Array.from(
+        boundary.querySelectorAll('h1, h2, h3, h4, h5, h6'),
+      ).find(
+        (candidate) =>
+          candidate !== heading &&
+          Boolean(
+            heading.compareDocumentPosition(candidate) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+          ) &&
+          (headingLevel(candidate) ?? 7) <= startLevel,
       );
 
-      while (walker.nextNode()) {
-        const text = walker.currentNode.textContent
-          ?.replace(/\s+/g, ' ')
-          .trim();
-        if (text) parts.push(text);
+      const range = document.createRange();
+      range.setStartAfter(heading);
+      if (stopHeading) {
+        range.setEndBefore(stopHeading);
+      } else {
+        range.setEnd(boundary, boundary.childNodes.length);
       }
 
-      const markdown = plainTextToSafeMarkdown(parts.join(' '));
+      const markdown = htmlToSafeMarkdown(range.cloneContents());
       if (markdown) return markdown;
     }
     return undefined;
