@@ -42,6 +42,59 @@ function normalizeMarkdown(markdown: string): string {
     .trim();
 }
 
+// Built once at module scope: this configuration is stateless across calls,
+// and htmlToSafeMarkdown() can run several times per extraction (DOM/JSON-LD
+// /meta/visible-text candidates), so re-instantiating it per call is wasted
+// setup work.
+const turndown = new TurndownService({
+  bulletListMarker: '-',
+  codeBlockStyle: 'fenced',
+  emDelimiter: '*',
+  headingStyle: 'atx',
+  strongDelimiter: '**',
+});
+
+// Turndown pads list markers to 4 columns (e.g. "-   item") to line up
+// continuation lines under a 4-space indent; override with a single space
+// so plain lists don't come out with distractingly wide gaps.
+turndown.addRule('listItem', {
+  filter: 'li',
+  replacement(content, node, options) {
+    const parent = node.parentNode as Element | null;
+    let prefix = `${options.bulletListMarker ?? '-'} `;
+    if (parent?.nodeName === 'OL') {
+      const start = parent.getAttribute('start');
+      const index = Array.prototype.indexOf.call(parent.children, node);
+      const number = start ? Number(start) + index : index + 1;
+      prefix = `${String(number)}. `;
+    }
+    const isParagraph = content.endsWith('\n');
+    const trimmed = content.replace(/^\n+/, '').replace(/\n+$/, '');
+    const body = trimmed + (isParagraph ? '\n' : '');
+    const indented = body.replace(/\n/gm, `\n${' '.repeat(prefix.length)}`);
+    return prefix + indented + (node.nextSibling ? '\n' : '');
+  },
+});
+
+// `src` is never in ALLOWED_ATTR below, so an <img> only ever carries alt
+// text here -- surface that as plain text instead of Turndown's default
+// `![alt](src)` rule, which drops the alt text entirely when there's no src.
+turndown.addRule('image', {
+  filter: 'img',
+  replacement(_content, node) {
+    const alt = (node as Element).getAttribute('alt')?.trim();
+    return alt ? turndown.escape(alt) : '';
+  },
+});
+
+// Turndown's default escaping only guards Markdown syntax characters, not
+// `<`/`>` -- without escaping those too, sanitized-away tag text left over
+// as plain text (e.g. "Use <script>...") would still read as raw,
+// renderer-interpretable HTML once this Markdown is displayed downstream.
+const defaultEscape = turndown.escape.bind(turndown);
+turndown.escape = (text: string) =>
+  defaultEscape(text).replace(/</g, '\\<').replace(/>/g, '\\>');
+
 function htmlToSafeMarkdown(html: string): string {
   const sanitized = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: DESCRIPTION_TAGS,
@@ -65,55 +118,6 @@ function htmlToSafeMarkdown(html: string): string {
       link.removeAttribute('href');
     }
   }
-
-  const turndown = new TurndownService({
-    bulletListMarker: '-',
-    codeBlockStyle: 'fenced',
-    emDelimiter: '*',
-    headingStyle: 'atx',
-    strongDelimiter: '**',
-  });
-
-  // Turndown pads list markers to 4 columns (e.g. "-   item") to line up
-  // continuation lines under a 4-space indent; override with a single space
-  // so plain lists don't come out with distractingly wide gaps.
-  turndown.addRule('listItem', {
-    filter: 'li',
-    replacement(content, node, options) {
-      const parent = node.parentNode as Element | null;
-      let prefix = `${options.bulletListMarker ?? '-'} `;
-      if (parent?.nodeName === 'OL') {
-        const start = parent.getAttribute('start');
-        const index = Array.prototype.indexOf.call(parent.children, node);
-        const number = start ? Number(start) + index : index + 1;
-        prefix = `${String(number)}. `;
-      }
-      const isParagraph = content.endsWith('\n');
-      const trimmed = content.replace(/^\n+/, '').replace(/\n+$/, '');
-      const body = trimmed + (isParagraph ? '\n' : '');
-      const indented = body.replace(/\n/gm, `\n${' '.repeat(prefix.length)}`);
-      return prefix + indented + (node.nextSibling ? '\n' : '');
-    },
-  });
-
-  // `src` is never in ALLOWED_ATTR above, so an <img> only ever carries alt
-  // text here -- surface that as plain text instead of Turndown's default
-  // `![alt](src)` rule, which drops the alt text entirely when there's no src.
-  turndown.addRule('image', {
-    filter: 'img',
-    replacement(_content, node) {
-      const alt = (node as Element).getAttribute('alt')?.trim();
-      return alt ? turndown.escape(alt) : '';
-    },
-  });
-
-  // Turndown's default escaping only guards Markdown syntax characters, not
-  // `<`/`>` -- without escaping those too, sanitized-away tag text left over
-  // as plain text (e.g. "Use <script>...") would still read as raw,
-  // renderer-interpretable HTML once this Markdown is displayed downstream.
-  const defaultEscape = turndown.escape.bind(turndown);
-  turndown.escape = (text: string) =>
-    defaultEscape(text).replace(/</g, '\\<').replace(/>/g, '\\>');
 
   return normalizeMarkdown(turndown.turndown(container));
 }
