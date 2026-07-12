@@ -116,6 +116,34 @@ const defaultEscape = turndown.escape.bind(turndown);
 turndown.escape = (text: string) =>
   defaultEscape(text).replace(/</g, '\\<').replace(/>/g, '\\>');
 
+// LinkedIn renders an in-feed "Job search faster with Premium" upsell card
+// (headline, bullet skeleton, testimonial, "Retry Premium for $0" CTA) inside
+// the same details container as the real description, with no heading tag
+// to bound it -- so the boundary-widening range capture in
+// descriptionMarkdownAfterHeading() has no way to stop before it. The one
+// stable, content-independent tell across locales/copy variants is the CTA
+// linking into LinkedIn's own premium-upsell path.
+function isLinkedinPremiumUpsellLink(href: string | null): boolean {
+  if (!href) return false;
+  try {
+    const url = new URL(href, document.baseURI);
+    return (
+      /(^|\.)linkedin\.com$/i.test(url.hostname) &&
+      url.pathname.startsWith('/premium/')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function removeNearestTopLevelAncestor(node: Node, root: ParentNode): void {
+  let current = node;
+  while (current.parentNode && current.parentNode !== root) {
+    current = current.parentNode;
+  }
+  current.parentNode?.removeChild(current);
+}
+
 function htmlToSafeMarkdown(html: string | Node): string {
   // RETURN_DOM_FRAGMENT hands back DOMPurify's own sanitized DOM tree
   // directly, so the sanitized markup is never re-serialized to a string and
@@ -134,8 +162,13 @@ function htmlToSafeMarkdown(html: string | Node): string {
   for (const link of sanitizedFragment.querySelectorAll<HTMLAnchorElement>(
     'a[href]',
   )) {
+    const rawHref = link.getAttribute('href');
+    if (isLinkedinPremiumUpsellLink(rawHref)) {
+      removeNearestTopLevelAncestor(link, sanitizedFragment);
+      continue;
+    }
     try {
-      const url = new URL(link.getAttribute('href') ?? '', document.baseURI);
+      const url = new URL(rawHref ?? '', document.baseURI);
       if (!['http:', 'https:', 'mailto:'].includes(url.protocol)) {
         link.removeAttribute('href');
       } else {
