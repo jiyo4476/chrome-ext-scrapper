@@ -880,6 +880,32 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.job_description).toBe('Build reliable product systems.');
   });
 
+  it('keeps sibling description content outside a nonempty heading wrapper', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <div data-testid="lazy-column">
+        <p><span>Austin, TX</span></p>
+        <section class="jobs-details">
+          <div class="heading-wrapper">
+            <h2>About the job</h2>
+            <p>Build reliable product systems.</p>
+          </div>
+          <ul><li>Review code</li><li>Mentor engineers</li></ul>
+          <h2>About the company</h2>
+          <p>Company profile text.</p>
+        </section>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe(
+      'Build reliable product systems.\n\n- Review code\n- Mentor engineers',
+    );
+    expect(draft.job_description).not.toContain('About the company');
+    expect(draft.job_description).not.toContain('Company profile text');
+  });
+
   it('preserves LinkedIn description structure as Markdown', async () => {
     setBody(`
       <h1>Senior Software Engineer</h1>

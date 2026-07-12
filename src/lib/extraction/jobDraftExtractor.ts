@@ -813,6 +813,12 @@ export async function extractJobDraft(detection: {
     heading: Element,
   ): string | undefined {
     const startLevel = headingLevel(heading) ?? 2;
+    const scope =
+      findLastLinkedinLazyColumn() ??
+      heading.closest('article, section, main') ??
+      heading.parentElement;
+    let fallbackMarkdown: string | undefined;
+
     for (
       let boundary = heading.parentElement;
       boundary && boundary !== document.body.parentElement;
@@ -839,9 +845,11 @@ export async function extractJobDraft(detection: {
       }
 
       const markdown = htmlToSafeMarkdown(range.cloneContents());
-      if (markdown) return markdown;
+      if (markdown) fallbackMarkdown = markdown;
+      if (stopHeading && markdown) return markdown;
+      if (boundary === scope) break;
     }
-    return undefined;
+    return fallbackMarkdown;
   }
 
   async function extractLinkedinDom(): Promise<void> {
