@@ -1115,6 +1115,231 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     // "About the company" as a match for "About the job".
     expect(draft.extraction_confidence?.job_description).not.toBe('high');
   });
+
+  it('autofills LinkedIn advanced fields from the selected detail pane', async () => {
+    document.title = 'Platform Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted 1 day ago</span></p>
+        <button><span>Remote</span></button>
+        <button><span>Full-time</span></button>
+        <li><span>Mid-Senior level</span></li>
+        <span>$120,000/yr - $150,000/yr</span>
+        <section><h2>About the job</h2><p>Active Secret clearance required.</p></section>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft).toMatchObject({
+      job_type: 'full_time',
+      is_remote: true,
+      experience_level: 'senior',
+      security_clearance_req: true,
+      salary_text: '$120,000/yr - $150,000/yr',
+      salary_type: 'annual',
+      salary_min: 12_000_000,
+      salary_max: 15_000_000,
+    });
+  });
+
+  it('maps hourly compensation and explicit on-site metadata', async () => {
+    document.title = 'Staff Infrastructure Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Austin, TX</span> · <span>Posted today</span></p>
+        <span>On-site</span>
+        <span>Contract</span>
+        <span>USD 60/hr - USD 80/hr</span>
+        <section><h2>About the job</h2><p>No security clearance required.</p></section>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft).toMatchObject({
+      job_type: 'contract',
+      is_remote: false,
+      experience_level: 'lead',
+      security_clearance_req: false,
+      salary_type: 'hourly',
+      hourly_rate_min: 60,
+      hourly_rate_max: 80,
+    });
+  });
+
+  it('scopes advanced-field signals to the selected last lazy column', async () => {
+    document.title = 'Engineer | Correct Co | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <span>Remote</span><span>Full-time</span><span>Executive</span>
+      </div>
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/correct-co/">Correct Co</a>
+        <p><span>Austin, TX</span> · <span>Posted today</span></p>
+        <span>Hybrid</span><span>Part-time</span><span>Entry level</span>
+        <section><h2>About the job</h2><p>Build reliable tools.</p></section>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft).toMatchObject({
+      job_type: 'part_time',
+      is_remote: false,
+      experience_level: 'entry',
+    });
+  });
+
+  it('does not infer a clearance requirement from equal-opportunity boilerplate', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Austin, TX</span> · <span>Posted today</span></p>
+        <section><h2>About the job</h2><p>We consider all qualified applicants, including protected veterans, without regard to status.</p></section>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.security_clearance_req).toBeUndefined();
+  });
+
+  it.each([
+    'Secret clearance is not required.',
+    'No active Secret clearance is required.',
+    'Secret clearance is preferred, but not required.',
+    'This role does not require a Secret clearance.',
+  ])('recognizes a negated named clearance in "%s"', async (description) => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Austin, TX</span> · <span>Posted today</span></p>
+        <section><h2>About the job</h2><p>${description}</p></section>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.security_clearance_req).toBe(false);
+  });
+
+  it.each([
+    {
+      currency: 'Canadian',
+      salary: 'CA$120,000/yr - CA$150,000/yr',
+    },
+    {
+      currency: 'Australian',
+      salary: 'A$120,000/yr - A$150,000/yr',
+    },
+  ])('rejects a $currency dollar salary label', async ({ salary }) => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Toronto, ON</span> · <span>Posted today</span></p>
+        <span>${salary}</span>
+        <section><h2>About the job</h2><p>Build reliable tools.</p></section>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.salary_text).toBeUndefined();
+    expect(draft.salary_type).toBeUndefined();
+    expect(draft.salary_min).toBeUndefined();
+    expect(draft.salary_max).toBeUndefined();
+  });
+
+  it('does not treat description prose as high-confidence workplace metadata', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Austin, TX</span> · <span>Posted today</span></p>
+        <section>
+          <h2>About the job</h2>
+          <p>Remote</p>
+          <p>You will support remote offices while working on-site.</p>
+        </section>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.is_remote).toBeUndefined();
+  });
+
+  it('prefers selected-pane job type over stale equal-confidence JSON-LD', async () => {
+    setHead(`
+      <script type="application/ld+json">
+        { "@type": "JobPosting", "employmentType": "FULL_TIME" }
+      </script>
+    `);
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Austin, TX</span> · <span>Posted today</span></p>
+        <span>Contract</span>
+        <section><h2>About the job</h2><p>Build reliable tools.</p></section>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_type).toBe('contract');
+  });
+
+  it.each([
+    ['Internship', 'internship'],
+    ['Temporary', 'temp'],
+    ['Freelance', 'freelance'],
+  ] as const)(
+    'maps the LinkedIn %s chip to job_type %s',
+    async (label, expected) => {
+      document.title = 'Engineer | Acme Corp | LinkedIn';
+      setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Austin, TX</span> · <span>Posted today</span></p>
+        <span>${label}</span>
+        <section><h2>About the job</h2><p>Build reliable tools.</p></section>
+      </div>
+    `);
+
+      const { draft } = await extractJobDraft(LINKEDIN);
+
+      expect(draft.job_type).toBe(expected);
+    },
+  );
+
+  it.each([
+    ['Associate', 'mid'],
+    ['Director', 'executive'],
+  ] as const)(
+    'maps the LinkedIn %s seniority label to experience_level %s',
+    async (label, expected) => {
+      document.title = 'Engineer | Acme Corp | LinkedIn';
+      setBody(`
+        <div data-testid="lazy-column">
+          <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+          <p><span>Austin, TX</span> · <span>Posted today</span></p>
+          <span>${label}</span>
+          <section><h2>About the job</h2><p>Build reliable tools.</p></section>
+        </div>
+      `);
+
+      const { draft } = await extractJobDraft(LINKEDIN);
+
+      expect(draft.experience_level).toBe(expected);
+    },
+  );
 });
 
 describe('extractJobDraft — Indeed DOM extraction', () => {

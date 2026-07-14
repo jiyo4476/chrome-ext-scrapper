@@ -54,6 +54,33 @@ const DESCRIPTION_FORBIDDEN_TAGS = [
   'textarea',
 ];
 
+type LinkedinJobTypeMapping = readonly [
+  RegExp,
+  NonNullable<JobDraft['job_type']>,
+];
+
+type LinkedinExperienceLevelMapping = readonly [
+  RegExp,
+  NonNullable<JobDraft['experience_level']>,
+];
+
+const LINKEDIN_JOB_TYPE_MAPPINGS: readonly LinkedinJobTypeMapping[] = [
+  [/^(full[- ]time|permanent)$/i, 'full_time'],
+  [/^part[- ]time$/i, 'part_time'],
+  [/^(contract|contractor|c2c|w2 contract)$/i, 'contract'],
+  [/^(intern|internship)$/i, 'internship'],
+  [/^(temporary|seasonal)$/i, 'temp'],
+  [/^freelance$/i, 'freelance'],
+];
+
+const LINKEDIN_EXPERIENCE_LEVEL_MAPPINGS: readonly LinkedinExperienceLevelMapping[] =
+  [
+    [/^(executive|director)$/i, 'executive'],
+    [/^(mid-senior level|senior)$/i, 'senior'],
+    [/^(associate|mid level|mid-level)$/i, 'mid'],
+    [/^(entry level|entry-level|internship)$/i, 'entry'],
+  ];
+
 function normalizeMarkdown(markdown: string): string {
   return markdown
     .split('\n')
@@ -731,6 +758,208 @@ export async function extractJobDraft(detection: {
     );
   }
 
+  function isWithinLinkedinDescription(
+    element: Element,
+    heading: Element | undefined,
+    stopHeading: Element | undefined,
+  ): boolean {
+    if (!heading) return false;
+    const followsHeading = Boolean(
+      heading.compareDocumentPosition(element) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    const precedesStop =
+      !stopHeading ||
+      Boolean(
+        element.compareDocumentPosition(stopHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    return element === heading || (followsHeading && precedesStop);
+  }
+
+  function findLinkedinDescriptionStopHeading(
+    root: ParentNode,
+    heading: Element,
+  ): Element | undefined {
+    const startLevel = headingLevel(heading) ?? 2;
+    return Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6')).find(
+      (candidate) =>
+        candidate !== heading &&
+        Boolean(
+          heading.compareDocumentPosition(candidate) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        ) &&
+        (headingLevel(candidate) ?? 7) <= startLevel,
+    );
+  }
+
+  function linkedinCompactTexts(
+    root: ParentNode,
+    descriptionHeading: Element | undefined,
+  ): string[] {
+    const descriptionStopHeading = descriptionHeading
+      ? findLinkedinDescriptionStopHeading(root, descriptionHeading)
+      : undefined;
+    const values = Array.from(
+      root.querySelectorAll<HTMLElement>('button, a, li, span, p'),
+    ).flatMap((element) => {
+      if (
+        isWithinLinkedinDescription(
+          element,
+          descriptionHeading,
+          descriptionStopHeading,
+        )
+      ) {
+        return [];
+      }
+      const text = textOf(element);
+      const ariaLabel = element.getAttribute('aria-label')?.trim();
+      return [text, ariaLabel];
+    });
+
+    return Array.from(
+      new Set(
+        values.filter(
+          (value): value is string =>
+            typeof value === 'string' &&
+            value.length > 0 &&
+            value.length <= 200,
+        ),
+      ),
+    );
+  }
+
+  function mapLinkedinJobType(
+    texts: string[],
+  ): JobDraft['job_type'] | undefined {
+    for (const text of texts) {
+      const mapping = LINKEDIN_JOB_TYPE_MAPPINGS.find(([pattern]) =>
+        pattern.test(text),
+      );
+      if (mapping) return mapping[1];
+    }
+    return undefined;
+  }
+
+  function mapLinkedinExperienceLevel(
+    texts: string[],
+  ): JobDraft['experience_level'] | undefined {
+    for (const text of texts) {
+      const mapping = LINKEDIN_EXPERIENCE_LEVEL_MAPPINGS.find(([pattern]) =>
+        pattern.test(text),
+      );
+      if (mapping) return mapping[1];
+    }
+    return undefined;
+  }
+
+  function inferExperienceFromTitle(
+    title: string | undefined,
+  ): JobDraft['experience_level'] | undefined {
+    if (!title) return undefined;
+    if (/\b(chief|director|vice president|vp|executive)\b/i.test(title)) {
+      return 'executive';
+    }
+    if (/\b(staff|principal|lead)\b/i.test(title)) return 'lead';
+    if (/\b(senior|sr\.?)\b/i.test(title)) return 'senior';
+    if (/\b(mid[- ]level|intermediate)\b/i.test(title)) return 'mid';
+    if (/\b(junior|jr\.?|entry[- ]level|new grad|intern)\b/i.test(title)) {
+      return 'entry';
+    }
+    return undefined;
+  }
+
+  function detectLinkedinRemote(texts: string[]): boolean | undefined {
+    if (texts.some((text) => /^remote$/i.test(text))) return true;
+    if (texts.some((text) => /^(hybrid|on[- ]site|onsite)$/i.test(text))) {
+      return false;
+    }
+    return undefined;
+  }
+
+  function detectClearanceRequirement(
+    description: string | undefined,
+  ): boolean | undefined {
+    if (!description) return undefined;
+    if (
+      /\bno (?:[\w/-]+ ){0,4}(?:security )?clearance (?:is )?required\b/i.test(
+        description,
+      ) ||
+      /\b(?:does not|doesn't|do not|don't) require (?:an? )?(?:[\w/-]+ ){0,4}(?:security )?clearance\b/i.test(
+        description,
+      ) ||
+      /\b(?:[\w/-]+ ){0,4}(?:security )?clearance\b[^\n.!?]{0,40}\bnot (?:currently )?required\b/i.test(
+        description,
+      )
+    ) {
+      return false;
+    }
+    if (
+      /\b(?:active|current) (?:[\w/-]+ )?(?:security )?clearance\b/i.test(
+        description,
+      ) ||
+      /\b(?:clearance|security clearance) (?:is )?required\b/i.test(
+        description,
+      ) ||
+      /\b(?:must (?:have|hold|possess)|requires?|required to (?:have|hold|possess)|ability to obtain) (?:an? )?(?:active )?(?:[\w/-]+ )?(?:security )?clearance\b/i.test(
+        description,
+      ) ||
+      /\b(?:TS\/SCI|top secret\/SCI|secret clearance)\b/i.test(description)
+    ) {
+      return true;
+    }
+    return undefined;
+  }
+
+  function parseLinkedinSalary(texts: string[]):
+    | {
+        text: string;
+        type: NonNullable<JobDraft['salary_type']>;
+        min: number;
+        max: number;
+      }
+    | undefined {
+    const hasUsdMarker = (text: string): boolean =>
+      !/\b(?!US(?:D)?\b)[A-Z]{1,3}\s*\$/i.test(text) &&
+      /(?:\bUSD\b|\bUS\$|(?<![A-Za-z])\$)/i.test(text);
+    const salaryText = texts
+      .filter(
+        (text) =>
+          !/\b(?:AUD|CAD|EUR|GBP|NZD)\b/i.test(text) &&
+          hasUsdMarker(text) &&
+          /(?:\/\s*(?:yr|year|hr|hour)|per\s+(?:year|hour)|annually|hourly)/i.test(
+            text,
+          ),
+      )
+      .sort((a, b) => a.length - b.length)[0];
+    if (!salaryText) return undefined;
+
+    const values = Array.from(
+      salaryText.matchAll(
+        /(?:\bUSD\s*\$?|\bUS\$|(?<![A-Za-z])\$)\s*([\d,.]+)\s*([kK])?/gi,
+      ),
+    )
+      .map((match) => {
+        const parsed = Number((match[1] ?? '').replace(/,/g, ''));
+        return Number.isFinite(parsed)
+          ? parsed * (match[2]?.toLowerCase() === 'k' ? 1000 : 1)
+          : undefined;
+      })
+      .filter((value): value is number => value !== undefined);
+    const min = values[0];
+    if (min === undefined) return undefined;
+
+    const type = /(?:\/\s*(?:hr|hour)|per\s+hour|hourly)/i.test(salaryText)
+      ? 'hourly'
+      : 'annual';
+    return {
+      text: salaryText,
+      type,
+      min,
+      max: values[1] ?? min,
+    };
+  }
+
   function linkedinLocationScore(text: string): number {
     const normalized = text.toLowerCase();
     if (
@@ -944,14 +1173,55 @@ export async function extractJobDraft(detection: {
     );
     addCandidate('company_name', textOf(companyEl), 'dom', 'high');
     addCandidate('job_location', textOf(locationEl), 'dom', 'medium');
+    const description = descriptionEl
+      ? descriptionMarkdownAfterHeading(descriptionEl)
+      : undefined;
+    addCandidate('job_description', description, 'dom', 'high');
+
+    const selectedPane = findLastLinkedinLazyColumn();
+    if (!selectedPane) return;
+
+    const compactTexts = linkedinCompactTexts(selectedPane, descriptionEl);
+    addCandidate('job_type', mapLinkedinJobType(compactTexts), 'dom', 'high');
     addCandidate(
-      'job_description',
-      descriptionEl
-        ? descriptionMarkdownAfterHeading(descriptionEl)
-        : undefined,
+      'is_remote',
+      detectLinkedinRemote(compactTexts),
       'dom',
       'high',
     );
+
+    const structuredExperience = mapLinkedinExperienceLevel(compactTexts);
+    addCandidate('experience_level', structuredExperience, 'dom', 'high');
+    if (!structuredExperience) {
+      addCandidate(
+        'experience_level',
+        inferExperienceFromTitle(
+          title ?? textOf(selectedPane.querySelector('h1')),
+        ),
+        'dom',
+        'medium',
+      );
+    }
+
+    addCandidate(
+      'security_clearance_req',
+      detectClearanceRequirement(description),
+      'dom',
+      'medium',
+    );
+
+    const salary = parseLinkedinSalary(compactTexts);
+    if (salary) {
+      addCandidate('salary_text', salary.text, 'dom', 'high');
+      addCandidate('salary_type', salary.type, 'dom', 'high');
+      if (salary.type === 'annual') {
+        addCandidate('salary_min', Math.round(salary.min * 100), 'dom', 'high');
+        addCandidate('salary_max', Math.round(salary.max * 100), 'dom', 'high');
+      } else {
+        addCandidate('hourly_rate_min', salary.min, 'dom', 'high');
+        addCandidate('hourly_rate_max', salary.max, 'dom', 'high');
+      }
+    }
   }
 
   const GOOGLE_JOB_HEADING_SELECTOR =
