@@ -1,7 +1,6 @@
 import DOMPurify from 'dompurify';
 import TurndownService from 'turndown';
 import type { ApiSourcePlatform, JobDraft } from '../schemas';
-import { extractTaxonomy } from './taxonomyExtractor';
 
 // '#text' must be listed explicitly alongside KEEP_CONTENT: false below --
 // without it, DOMPurify treats bare text nodes as unlisted too and strips
@@ -1343,19 +1342,6 @@ export async function extractJobDraft(detection: {
       'dom',
       'medium',
     );
-
-    if (description) {
-      const taxonomy = extractTaxonomy(description);
-      if (taxonomy.skills.length > 0) {
-        addCandidate('skills', taxonomy.skills, 'dom', 'low');
-      }
-      if (taxonomy.software.length > 0) {
-        addCandidate('software', taxonomy.software, 'dom', 'low');
-      }
-      if (taxonomy.certifications.length > 0) {
-        addCandidate('certifications', taxonomy.certifications, 'dom', 'low');
-      }
-    }
 
     const structuredSalary = parseLinkedinSalary(compactTexts);
     const salary =

@@ -1246,7 +1246,7 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     });
   });
 
-  it('extracts LinkedIn taxonomy arrays from the expandable description', async () => {
+  it('leaves skills, software, and certifications unset so the backend NLP pass runs', async () => {
     document.title = 'Software Engineer | Acme Corp | LinkedIn';
     setBody(`
       <div data-testid="lazy-column">
@@ -1256,32 +1256,6 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
           <p>Build TypeScript and React services deployed with k8s and PostgreSQL.</p>
           <p>Our team uses GitHub, Jira, and Visual Studio Code.</p>
           <p>AWS Certified or CKA credentials are preferred.</p>
-        </div>
-      </div>
-    `);
-
-    const { draft } = await extractJobDraft(LINKEDIN);
-
-    expect(draft).toMatchObject({
-      skills: ['TypeScript', 'React', 'PostgreSQL', 'Kubernetes', 'AWS'],
-      software: ['Jira', 'VS Code', 'GitHub'],
-      certifications: ['AWS Certified', 'Kubernetes Administrator'],
-    });
-    expect(draft.extraction_confidence).toMatchObject({
-      skills: 'low',
-      software: 'low',
-      certifications: 'low',
-    });
-  });
-
-  it('leaves LinkedIn taxonomy arrays unset when no curated terms match', async () => {
-    document.title = 'Software Engineer | Acme Corp | LinkedIn';
-    setBody(`
-      <div data-testid="lazy-column">
-        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
-        <p><span>Denver, CO</span> · <span>Posted today</span></p>
-        <div data-testid="expandable-text-box">
-          Communicate clearly and build reliable products with the team.
         </div>
       </div>
     `);
