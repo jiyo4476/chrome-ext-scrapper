@@ -830,6 +830,69 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.job_location).toBeUndefined();
   });
 
+  it('prefers the LinkedIn expandable text box for job_description', async () => {
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Austin, TX</span></p>
+        <h2>About the job</h2>
+        <p>Stale heading-range description.</p>
+        <div data-testid="expandable-text-box">
+          <p>Build <strong>reliable</strong> products.</p>
+          <ul><li>Review code</li><li>Mentor engineers</li></ul>
+          <button>Show more</button>
+          <script>alert('unsafe')</script>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe(
+      'Build **reliable** products.\n\n- Review code\n- Mentor engineers',
+    );
+    expect(draft.job_description).not.toContain('Stale heading-range');
+    expect(draft.job_description).not.toContain('Show more');
+    expect(draft.job_description).not.toContain('unsafe');
+  });
+
+  it('uses the expandable text box from the selected last lazy column', async () => {
+    setBody(`
+      <div data-testid="lazy-column">
+        <div data-testid="expandable-text-box">Earlier job description.</div>
+      </div>
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span></p>
+        <div data-testid="expandable-text-box">Selected job description.</div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe('Selected job description.');
+    expect(draft.job_description).not.toContain('Earlier job description');
+  });
+
+  it('does not treat expandable description prose as LinkedIn metadata', async () => {
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span></p>
+        <button><span>On-site</span></button>
+        <button><span>Part-time</span></button>
+        <div data-testid="expandable-text-box">
+          <p>This remote full-time opportunity supports a distributed product.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.is_remote).toBe(false);
+    expect(draft.job_type).toBe('part_time');
+  });
+
   it('extracts job_description from the "About the job" section, excluding the heading text', async () => {
     setBody(`
       <h1>Senior Software Engineer</h1>

@@ -750,6 +750,14 @@ export async function extractJobDraft(detection: {
     return heading ?? undefined;
   }
 
+  function findLinkedinDescriptionSource(): Element | undefined {
+    const root = findLastLinkedinLazyColumn() ?? document;
+    return (
+      root.querySelector('[data-testid="expandable-text-box"]') ??
+      findAboutTheJobHeading()
+    );
+  }
+
   function findLinkedinCompany(): Element | undefined {
     const root = findLastLinkedinLazyColumn() ?? document;
     return (
@@ -795,20 +803,28 @@ export async function extractJobDraft(detection: {
 
   function linkedinCompactTexts(
     root: ParentNode,
-    descriptionHeading: Element | undefined,
+    descriptionSource: Element | undefined,
   ): string[] {
-    const descriptionStopHeading = descriptionHeading
-      ? findLinkedinDescriptionStopHeading(root, descriptionHeading)
+    const descriptionBox = descriptionSource?.matches(
+      '[data-testid="expandable-text-box"]',
+    )
+      ? descriptionSource
       : undefined;
+    const descriptionStopHeading =
+      descriptionSource && !descriptionBox
+        ? findLinkedinDescriptionStopHeading(root, descriptionSource)
+        : undefined;
     const values = Array.from(
       root.querySelectorAll<HTMLElement>('button, a, li, span, p'),
     ).flatMap((element) => {
       if (
-        isWithinLinkedinDescription(
-          element,
-          descriptionHeading,
-          descriptionStopHeading,
-        )
+        (descriptionBox?.contains(element) ?? false) ||
+        (!descriptionBox &&
+          isWithinLinkedinDescription(
+            element,
+            descriptionSource,
+            descriptionStopHeading,
+          ))
       ) {
         return [];
       }
@@ -1150,6 +1166,21 @@ export async function extractJobDraft(detection: {
     return fallbackMarkdown;
   }
 
+  function linkedinDescriptionMarkdown(source: Element): string | undefined {
+    if (!source.matches('[data-testid="expandable-text-box"]')) {
+      return descriptionMarkdownAfterHeading(source);
+    }
+
+    const description = source.cloneNode(true) as Element;
+    removeLinkedinCompanyInsightsUpsell(description);
+    for (const control of description.querySelectorAll(
+      'button, [role="button"]',
+    )) {
+      control.remove();
+    }
+    return elementToSafeMarkdown(description);
+  }
+
   async function extractLinkedinDom(): Promise<void> {
     const { company, title } = parseLinkedinPageTitle(document.title);
     // Both fields come from an unambiguous pipe-delimited split, so both
@@ -1168,13 +1199,17 @@ export async function extractJobDraft(detection: {
     // selectors (rendered after the SPA hydrates) are the only signal
     // available -- wait on all three together in one observer.
     const [companyEl, locationEl, descriptionEl] = await waitForEach(
-      [findLinkedinCompany, findLinkedinLocation, findAboutTheJobHeading],
+      [
+        findLinkedinCompany,
+        findLinkedinLocation,
+        findLinkedinDescriptionSource,
+      ],
       800,
     );
     addCandidate('company_name', textOf(companyEl), 'dom', 'high');
     addCandidate('job_location', textOf(locationEl), 'dom', 'medium');
     const description = descriptionEl
-      ? descriptionMarkdownAfterHeading(descriptionEl)
+      ? linkedinDescriptionMarkdown(descriptionEl)
       : undefined;
     addCandidate('job_description', description, 'dom', 'high');
 
