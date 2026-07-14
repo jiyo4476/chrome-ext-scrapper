@@ -17,7 +17,24 @@ export const AUTO_SCRAPE_DOMAINS = [
   'indeed.com',
   'glassdoor.com',
   'dice.com',
+  'greenhouse.io',
+  'lever.co',
+  'myworkdayjobs.com',
+  'wellfound.com',
+  'angel.co',
+  'builtin.com',
+  'builtincolorado.com',
 ] as const;
+
+function pathSegmentAfter(path: string, segment: string): string | undefined {
+  const parts = path.split('/').filter(Boolean);
+  const index = parts.findIndex((part) => part.toLowerCase() === segment);
+  return index >= 0 ? parts[index + 1] : undefined;
+}
+
+function finalPathSegment(path: string): string | undefined {
+  return path.split('/').filter(Boolean).at(-1);
+}
 
 function getIndeedJobId(parsed: URL): string | undefined {
   return (
@@ -56,6 +73,27 @@ export function isAutoScrapeUrl(url: string): boolean {
   }
   if (hostMatches(host, 'dice.com')) {
     return path.startsWith('/job-detail/');
+  }
+  if (hostMatches(host, 'greenhouse.io')) {
+    return /\/jobs\/[^/]+$/i.test(path);
+  }
+  if (hostMatches(host, 'lever.co')) {
+    return path.split('/').filter(Boolean).length === 2;
+  }
+  if (hostMatches(host, 'myworkdayjobs.com')) {
+    return path.includes('/job/');
+  }
+  if (hostMatches(host, 'wellfound.com')) {
+    return path.startsWith('/jobs/');
+  }
+  if (hostMatches(host, 'angel.co')) {
+    return path.includes('/jobs/');
+  }
+  if (
+    hostMatches(host, 'builtin.com') ||
+    hostMatches(host, 'builtincolorado.com')
+  ) {
+    return /\/job\/[^/]+\/\d+$/i.test(path);
   }
   return false;
 }
@@ -163,16 +201,44 @@ export function detectPlatform(url: string): PlatformDetection {
     return { platform: 'dice', confidence: 'high' };
   }
   if (hostMatches(host, 'greenhouse.io')) {
-    return { platform: 'greenhouse', confidence: 'high' };
+    const externalJobId = pathSegmentAfter(new URL(url).pathname, 'jobs');
+    return {
+      platform: 'greenhouse',
+      confidence: 'high',
+      ...(externalJobId ? { externalJobId } : {}),
+    };
   }
   if (hostMatches(host, 'lever.co')) {
-    return { platform: 'lever', confidence: 'high' };
+    const externalJobId = finalPathSegment(new URL(url).pathname);
+    return {
+      platform: 'lever',
+      confidence: 'high',
+      ...(externalJobId ? { externalJobId } : {}),
+    };
   }
   if (hostMatches(host, 'myworkdayjobs.com')) {
     return { platform: 'workday', confidence: 'high' };
   }
   if (hostMatches(host, 'wellfound.com') || hostMatches(host, 'angel.co')) {
-    return { platform: 'angellist', confidence: 'high' };
+    const externalJobId = pathSegmentAfter(new URL(url).pathname, 'jobs');
+    return {
+      platform: 'angellist',
+      confidence: 'high',
+      ...(externalJobId ? { externalJobId } : {}),
+    };
+  }
+  if (
+    hostMatches(host, 'builtin.com') ||
+    hostMatches(host, 'builtincolorado.com')
+  ) {
+    const externalJobId = finalPathSegment(new URL(url).pathname);
+    if (/\/job\/[^/]+\/\d+\/?$/i.test(new URL(url).pathname)) {
+      return {
+        platform: 'direct',
+        confidence: 'high',
+        ...(externalJobId ? { externalJobId } : {}),
+      };
+    }
   }
   if (isGoogleHost(host) && lowerUrl.includes('ibp=htl')) {
     return { platform: 'google', confidence: 'high' };

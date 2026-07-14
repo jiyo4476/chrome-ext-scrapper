@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import builtInFixture from '../../../fixtures/html/builtin-colorado-basic.html?raw';
+import builtInRemoteFixture from '../../../fixtures/html/builtin-colorado-remote.html?raw';
+import diceFixture from '../../../fixtures/html/dice-basic.html?raw';
+import greenhouseFixture from '../../../fixtures/html/greenhouse-ats-basic.html?raw';
+import leverFixture from '../../../fixtures/html/lever-basic.html?raw';
+import wellfoundFixture from '../../../fixtures/html/wellfound-basic.html?raw';
+import workdayFixture from '../../../fixtures/html/workday-basic.html?raw';
 import { extractJobDraft } from './jobDraftExtractor';
 
 function setHead(html: string): void {
@@ -12,6 +19,13 @@ function setBody(html: string): void {
 
 function setLocation(url: string): void {
   vi.stubGlobal('location', new URL(url));
+}
+
+function loadFixture(html: string, url: string): void {
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  document.head.innerHTML = parsed.head.innerHTML;
+  document.body.innerHTML = parsed.body.innerHTML;
+  setLocation(url);
 }
 
 const OTHER = { platform: 'other' as const, confidence: 'low' as const };
@@ -1625,5 +1639,182 @@ describe('extractJobDraft — Google Jobs DOM extraction', () => {
     const { draft } = await pending;
 
     expect(draft.job_title).toBeUndefined();
+  });
+});
+
+describe('extractJobDraft — Phase 2 provider fixtures', () => {
+  it('extracts required fields and stable ID from Greenhouse', async () => {
+    loadFixture(
+      greenhouseFixture,
+      'https://boards.greenhouse.io/hiringco/jobs/456789',
+    );
+    const { draft } = await extractJobDraft({
+      platform: 'greenhouse',
+      confidence: 'high',
+      externalJobId: '456789',
+    });
+
+    expect(draft).toMatchObject({
+      source_platform: 'greenhouse',
+      external_job_id: '456789',
+      company_name: 'Hiring Co',
+      job_title: 'Platform Engineer',
+      job_location: 'Denver, CO (Hybrid)',
+      is_remote: false,
+      job_description: 'Operate developer infrastructure.',
+    });
+  });
+
+  it('extracts Lever categories and canonical posting identity', async () => {
+    loadFixture(leverFixture, 'https://jobs.lever.co/acme-robotics/lever-123');
+    const { draft } = await extractJobDraft({
+      platform: 'lever',
+      confidence: 'high',
+      externalJobId: 'lever-123',
+    });
+
+    expect(draft).toMatchObject({
+      source_platform: 'lever',
+      external_job_id: 'lever-123',
+      company_name: 'Acme Robotics',
+      job_title: 'Backend Engineer',
+      job_location: 'Santiago / Latin America',
+      is_remote: true,
+      job_type: 'full_time',
+      keywords: ['Engineering'],
+      job_description: 'Build reliable robotics APIs.',
+      job_link: 'https://jobs.lever.co/acme-robotics/lever-123',
+    });
+  });
+
+  it('prefers Lever employer metadata over a humanized tenant slug', async () => {
+    loadFixture(leverFixture, 'https://jobs.lever.co/applydigital/lever-123');
+    document.querySelector('.posting-company')?.remove();
+    document
+      .querySelector('meta[property="og:site_name"]')
+      ?.setAttribute('content', 'APPLY');
+
+    const { draft } = await extractJobDraft({
+      platform: 'lever',
+      confidence: 'high',
+      externalJobId: 'lever-123',
+    });
+
+    expect(draft.company_name).toBe('APPLY');
+  });
+
+  it('waits for and extracts Workday requisition metadata', async () => {
+    loadFixture(
+      workdayFixture,
+      'https://acme.myworkdayjobs.com/careers/job/Colorado/Security-Engineer/R-1234',
+    );
+    const { draft } = await extractJobDraft({
+      platform: 'workday',
+      confidence: 'high',
+    });
+
+    expect(draft).toMatchObject({
+      source_platform: 'workday',
+      external_job_id: 'R-1234',
+      company_name: 'Acme Workday',
+      job_title: 'Security Engineer',
+      job_location: 'Remote - Colorado',
+      is_remote: true,
+      date_posted: '2026-07-10',
+      job_type: 'full_time',
+      job_description: 'Protect cloud services.',
+    });
+  });
+
+  it('extracts Dice skills, compensation, and contract type', async () => {
+    loadFixture(
+      diceFixture,
+      'https://www.dice.com/job-detail/123e4567-e89b-12d3-a456-426614174000',
+    );
+    const { draft } = await extractJobDraft({
+      platform: 'dice',
+      confidence: 'high',
+    });
+
+    expect(draft).toMatchObject({
+      source_platform: 'dice',
+      external_job_id: '123e4567-e89b-12d3-a456-426614174000',
+      job_type: 'contract',
+      is_remote: true,
+      salary_text: '$70 - $85 an hour',
+      skills: ['TypeScript', 'React'],
+    });
+  });
+
+  it('preserves Wellfound salary and equity text without inventing bounds', async () => {
+    loadFixture(
+      wellfoundFixture,
+      'https://wellfound.com/jobs/123456-founding-engineer',
+    );
+    const { draft } = await extractJobDraft({
+      platform: 'angellist',
+      confidence: 'high',
+      externalJobId: '123456-founding-engineer',
+    });
+
+    expect(draft).toMatchObject({
+      source_platform: 'angellist',
+      external_job_id: '123456-founding-engineer',
+      company_name: 'Launch Co',
+      job_title: 'Founding Engineer',
+      job_location: 'Remote - US',
+      is_remote: true,
+      salary_text: '$150k – $190k • 0.25% – 0.75% equity',
+      job_type: 'full_time',
+      job_description: 'Build the first product team.',
+    });
+    expect(draft.salary_min).toBeUndefined();
+    expect(draft.salary_max).toBeUndefined();
+  });
+
+  it('extracts Built In JSON-LD graph fields and prefers scoped safe DOM Markdown', async () => {
+    loadFixture(
+      builtInFixture,
+      'https://builtin.com/job/staff-platform-engineer/9764574',
+    );
+    const { draft } = await extractJobDraft({
+      platform: 'direct',
+      confidence: 'high',
+      externalJobId: '9764574',
+    });
+
+    expect(draft).toMatchObject({
+      source_platform: 'direct',
+      external_job_id: '9764574',
+      company_name: 'Peak Systems',
+      job_title: 'Staff Platform Engineer',
+      job_location: 'Denver, CO | Boulder, CO',
+      job_type: 'full_time',
+      date_posted: '2026-07-12',
+      job_link: 'https://builtin.com/job/staff-platform-engineer/9764574',
+    });
+    expect(draft.job_description).toContain('Own the **developer platform**.');
+    expect(draft.job_description).toContain('- Improve reliability');
+    expect(draft.job_description).not.toContain('unsafe');
+    expect(draft.job_description).not.toContain('Stale structured description');
+  });
+
+  it('extracts a Built In remote posting without inventing an onsite location', async () => {
+    loadFixture(
+      builtInRemoteFixture,
+      'https://builtin.com/job/remote-product-engineer/9880001',
+    );
+    const { draft } = await extractJobDraft({
+      platform: 'direct',
+      confidence: 'high',
+      externalJobId: '9880001',
+    });
+
+    expect(draft).toMatchObject({
+      external_job_id: '9880001',
+      job_location: 'Remote, United States',
+      is_remote: true,
+      job_description: 'Ship a distributed product.',
+    });
   });
 });

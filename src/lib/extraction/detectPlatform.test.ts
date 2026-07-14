@@ -12,6 +12,8 @@ describe('detectPlatform', () => {
     ['https://hiringco.myworkdayjobs.com/careers/job/123', 'workday'],
     ['https://wellfound.com/jobs/123', 'angellist'],
     ['https://angel.co/company/foo/jobs/123', 'angellist'],
+    ['https://www.builtincolorado.com/job/platform-engineer/9764574', 'direct'],
+    ['https://builtin.com/job/platform-engineer/9764574', 'direct'],
   ])('detects %s as %s with high confidence', (url, expectedPlatform) => {
     expect(detectPlatform(url)).toMatchObject({
       platform: expectedPlatform,
@@ -26,6 +28,18 @@ describe('detectPlatform', () => {
       platform: 'indeed',
       externalJobId: 'selected-123',
     });
+  });
+
+  it.each([
+    ['https://boards.greenhouse.io/hiringco/jobs/456789', '456789'],
+    ['https://jobs.lever.co/hiringco/lever-posting-id', 'lever-posting-id'],
+    [
+      'https://wellfound.com/jobs/123456-senior-engineer',
+      '123456-senior-engineer',
+    ],
+    ['https://builtin.com/job/platform-engineer/9764574', '9764574'],
+  ])('carries the stable job ID from %s', (url, externalJobId) => {
+    expect(detectPlatform(url).externalJobId).toBe(externalJobId);
   });
 
   it('detects a Google Jobs search results URL as google with high confidence', () => {
@@ -91,6 +105,13 @@ describe('detectPlatform', () => {
     });
   });
 
+  it('does not assign high confidence to a Built In non-job page', () => {
+    expect(detectPlatform('https://builtin.com/')).toEqual({
+      platform: 'other',
+      confidence: 'low',
+    });
+  });
+
   it('falls back to other with low confidence for an empty or malformed URL', () => {
     expect(detectPlatform('')).toEqual({
       platform: 'other',
@@ -113,6 +134,14 @@ describe('isAutoScrapeUrl', () => {
     'https://www.indeed.com/jobs/?q=engineer&vjk=abc123',
     'https://www.glassdoor.com/job-listing/software-engineer-acme.htm?jl=123',
     'https://www.dice.com/job-detail/123e4567-e89b-12d3-a456-426614174000',
+    'https://boards.greenhouse.io/hiringco/jobs/456789',
+    'https://job-boards.greenhouse.io/hiringco/jobs/456789',
+    'https://jobs.lever.co/hiringco/lever-posting-id',
+    'https://hiringco.myworkdayjobs.com/careers/job/Denver-CO/Engineer/R-1234',
+    'https://wellfound.com/jobs/123456-senior-engineer',
+    'https://angel.co/company/acme/jobs/123456-senior-engineer',
+    'https://www.builtincolorado.com/job/platform-engineer/9764574',
+    'https://builtin.com/job/platform-engineer/9764574',
   ])('allows a supported provider job page: %s', (url) => {
     expect(isAutoScrapeUrl(url)).toBe(true);
   });
@@ -125,6 +154,11 @@ describe('isAutoScrapeUrl', () => {
     'https://www.indeed.com/viewjob',
     'https://www.glassdoor.com/Reviews/index.htm',
     'https://www.dice.com/companies',
+    'https://boards.greenhouse.io/hiringco',
+    'https://jobs.lever.co/hiringco/lever-posting-id/apply',
+    'https://hiringco.myworkdayjobs.com/careers/search',
+    'https://wellfound.com/jobs',
+    'https://builtin.com/jobs',
     'https://linkedin.com.attacker.net/jobs/view/123',
     'https://www.indeed.com.evil.example/viewjob?jk=abc123',
     'https://example.com/jobs/123',
