@@ -856,22 +856,30 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.job_description).not.toContain('unsafe');
   });
 
-  it('uses the expandable text box from the selected last lazy column', async () => {
+  it('renders only the first LinkedIn expandable text box as job_description', async () => {
     setBody(`
       <div data-testid="lazy-column">
-        <div data-testid="expandable-text-box">Earlier job description.</div>
+        <div data-testid="expandable-text-box">
+          <p>Build <strong>reliable</strong> product systems.</p>
+          <ul><li>Review code</li><li>Mentor engineers</li></ul>
+        </div>
       </div>
       <div data-testid="lazy-column">
         <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
         <p><span>Denver, CO</span></p>
-        <div data-testid="expandable-text-box">Selected job description.</div>
+        <div data-testid="expandable-text-box">
+          <p>1-month free trial. Easy to cancel. We&rsquo;ll remind you 7 days before your trial ends.</p>
+        </div>
       </div>
     `);
 
     const { draft } = await extractJobDraft(LINKEDIN);
 
-    expect(draft.job_description).toBe('Selected job description.');
-    expect(draft.job_description).not.toContain('Earlier job description');
+    expect(draft.job_description).toBe(
+      'Build **reliable** product systems.\n\n- Review code\n- Mentor engineers',
+    );
+    expect(draft.job_description).not.toContain('1-month free trial');
+    expect(draft.job_description).not.toContain('trial ends');
   });
 
   it('does not treat expandable description prose as LinkedIn metadata', async () => {

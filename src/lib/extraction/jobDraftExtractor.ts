@@ -751,9 +751,8 @@ export async function extractJobDraft(detection: {
   }
 
   function findLinkedinDescriptionSource(): Element | undefined {
-    const root = findLastLinkedinLazyColumn() ?? document;
     return (
-      root.querySelector('[data-testid="expandable-text-box"]') ??
+      document.querySelector('[data-testid="expandable-text-box"]') ??
       findAboutTheJobHeading()
     );
   }
