@@ -857,6 +857,23 @@ export async function extractJobDraft(detection: {
     return undefined;
   }
 
+  function mapLinkedinJobTypeFromDescription(
+    description: string | undefined,
+  ): JobDraft['job_type'] | undefined {
+    if (!description) return undefined;
+    const match =
+      /\b(?:this|the)\s+(?:position|role|job)\s+(?:is|will be)\s+(?:an?\s+)?(full[- ]time|part[- ]time|contract(?:or)?|intern(?:ship)?|temporary|seasonal|freelance)\b/i.exec(
+        description,
+      ) ??
+      /\b(full[- ]time|part[- ]time|contract(?:or)?|intern(?:ship)?|temporary|seasonal|freelance)\s+(?:position|role|job|employment)\b/i.exec(
+        description,
+      ) ??
+      /\b(?:employment|job)\s+type\s*:\s*(full[- ]time|part[- ]time|contract(?:or)?|intern(?:ship)?|temporary|seasonal|freelance)\b/i.exec(
+        description,
+      );
+    return match?.[1] ? mapLinkedinJobType([match[1]]) : undefined;
+  }
+
   function mapLinkedinExperienceLevel(
     texts: string[],
   ): JobDraft['experience_level'] | undefined {
@@ -885,10 +902,62 @@ export async function extractJobDraft(detection: {
     return undefined;
   }
 
+  function inferExperienceFromDescription(
+    description: string | undefined,
+  ): JobDraft['experience_level'] | undefined {
+    if (!description) return undefined;
+    const explicit =
+      /\b(entry[- ]level|junior|mid[- ]level|intermediate|senior(?:[- ]level)?|staff|principal|lead|executive|director[- ]level)\s+(?:position|role|job|candidate)\b/i.exec(
+        description,
+      )?.[1];
+    if (explicit) return inferExperienceFromTitle(explicit);
+
+    const yearsMatch =
+      /\b(?:at least|minimum(?: of)?|requires?)?\s*(\d{1,2})\+?\s+years?(?:\s+of)?[^\n.!?]{0,60}\bexperience\b/i.exec(
+        description,
+      );
+    const years = Number(yearsMatch?.[1]);
+    if (!Number.isFinite(years)) return undefined;
+    if (years >= 8) return 'lead';
+    if (years >= 5) return 'senior';
+    if (years >= 3) return 'mid';
+    return 'entry';
+  }
+
   function detectLinkedinRemote(texts: string[]): boolean | undefined {
     if (texts.some((text) => /^remote$/i.test(text))) return true;
     if (texts.some((text) => /^(hybrid|on[- ]site|onsite)$/i.test(text))) {
       return false;
+    }
+    return undefined;
+  }
+
+  function detectLinkedinRemoteFromDescription(
+    description: string | undefined,
+  ): boolean | undefined {
+    if (!description) return undefined;
+    if (
+      /\b(?:this|the)\s+(?:position|role|job)\s+(?:is|will be)\s+(?:an?\s+)?(?:hybrid|on[- ]site|onsite|in[- ]office)\b/i.test(
+        description,
+      ) ||
+      /\b(?:workplace|work arrangement|work location|location)\s*:\s*(?:hybrid|on[- ]site|onsite|in[- ]office)\b/i.test(
+        description,
+      )
+    ) {
+      return false;
+    }
+    if (
+      /\b(?:this|the)\s+(?:position|role|job)\s+(?:is|will be)\s+(?:fully\s+)?remote\b/i.test(
+        description,
+      ) ||
+      /\b(?:fully\s+)?remote\s+(?:position|role|job|work)\b/i.test(
+        description,
+      ) ||
+      /\b(?:workplace|work arrangement|work location|location)\s*:\s*(?:fully\s+)?remote\b/i.test(
+        description,
+      )
+    ) {
+      return true;
     }
     return undefined;
   }
@@ -974,6 +1043,18 @@ export async function extractJobDraft(detection: {
       min,
       max: values[1] ?? min,
     };
+  }
+
+  function extractLinkedinSalarySignals(
+    description: string | undefined,
+  ): string[] {
+    if (!description) return [];
+    const amount = String.raw`(?:USD\s*\$?|US\$|(?<![A-Za-z])\$)\s*[\d,.]+\s*[kK]?`;
+    const range = new RegExp(
+      String.raw`${amount}(?:\s*(?:-|–|—|to)\s*${amount})?\s*(?:\/\s*(?:yr|year|hr|hour)|per\s+(?:year|hour)|annually|hourly)`,
+      'gi',
+    );
+    return Array.from(description.matchAll(range), (match) => match[0].trim());
   }
 
   function linkedinLocationScore(text: string): number {
@@ -1217,25 +1298,42 @@ export async function extractJobDraft(detection: {
     if (!selectedPane) return;
 
     const compactTexts = linkedinCompactTexts(selectedPane, descriptionEl);
-    addCandidate('job_type', mapLinkedinJobType(compactTexts), 'dom', 'high');
-    addCandidate(
-      'is_remote',
-      detectLinkedinRemote(compactTexts),
-      'dom',
-      'high',
-    );
+    const structuredJobType = mapLinkedinJobType(compactTexts);
+    addCandidate('job_type', structuredJobType, 'dom', 'high');
+    if (!structuredJobType) {
+      addCandidate(
+        'job_type',
+        mapLinkedinJobTypeFromDescription(description),
+        'dom',
+        'medium',
+      );
+    }
+    const structuredRemote = detectLinkedinRemote(compactTexts);
+    addCandidate('is_remote', structuredRemote, 'dom', 'high');
+    if (structuredRemote === undefined) {
+      addCandidate(
+        'is_remote',
+        detectLinkedinRemoteFromDescription(description),
+        'dom',
+        'medium',
+      );
+    }
 
     const structuredExperience = mapLinkedinExperienceLevel(compactTexts);
     addCandidate('experience_level', structuredExperience, 'dom', 'high');
     if (!structuredExperience) {
-      addCandidate(
-        'experience_level',
-        inferExperienceFromTitle(
-          title ?? textOf(selectedPane.querySelector('h1')),
-        ),
-        'dom',
-        'medium',
+      const titleExperience = inferExperienceFromTitle(
+        title ?? textOf(selectedPane.querySelector('h1')),
       );
+      addCandidate('experience_level', titleExperience, 'dom', 'medium');
+      if (!titleExperience) {
+        addCandidate(
+          'experience_level',
+          inferExperienceFromDescription(description),
+          'dom',
+          'low',
+        );
+      }
     }
 
     addCandidate(
@@ -1245,16 +1343,30 @@ export async function extractJobDraft(detection: {
       'medium',
     );
 
-    const salary = parseLinkedinSalary(compactTexts);
+    const structuredSalary = parseLinkedinSalary(compactTexts);
+    const salary =
+      structuredSalary ??
+      parseLinkedinSalary(extractLinkedinSalarySignals(description));
     if (salary) {
-      addCandidate('salary_text', salary.text, 'dom', 'high');
-      addCandidate('salary_type', salary.type, 'dom', 'high');
+      const salaryConfidence = structuredSalary ? 'high' : 'medium';
+      addCandidate('salary_text', salary.text, 'dom', salaryConfidence);
+      addCandidate('salary_type', salary.type, 'dom', salaryConfidence);
       if (salary.type === 'annual') {
-        addCandidate('salary_min', Math.round(salary.min * 100), 'dom', 'high');
-        addCandidate('salary_max', Math.round(salary.max * 100), 'dom', 'high');
+        addCandidate(
+          'salary_min',
+          Math.round(salary.min * 100),
+          'dom',
+          salaryConfidence,
+        );
+        addCandidate(
+          'salary_max',
+          Math.round(salary.max * 100),
+          'dom',
+          salaryConfidence,
+        );
       } else {
-        addCandidate('hourly_rate_min', salary.min, 'dom', 'high');
-        addCandidate('hourly_rate_max', salary.max, 'dom', 'high');
+        addCandidate('hourly_rate_min', salary.min, 'dom', salaryConfidence);
+        addCandidate('hourly_rate_max', salary.max, 'dom', salaryConfidence);
       }
     }
   }

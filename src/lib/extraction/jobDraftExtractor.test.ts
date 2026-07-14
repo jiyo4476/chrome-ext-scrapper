@@ -1207,6 +1207,97 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     });
   });
 
+  it('autofills LinkedIn advanced fields from explicit expandable description signals', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          <p>This is a full-time role. This position is remote.</p>
+          <p>Candidates need at least 5 years of experience.</p>
+          <p>The salary range is $120,000 - $150,000 per year.</p>
+          <p>Active Secret clearance required.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft).toMatchObject({
+      job_type: 'full_time',
+      is_remote: true,
+      experience_level: 'senior',
+      security_clearance_req: true,
+      salary_text: '$120,000 - $150,000 per year',
+      salary_type: 'annual',
+      salary_min: 12_000_000,
+      salary_max: 15_000_000,
+    });
+    expect(draft.extraction_confidence).toMatchObject({
+      job_type: 'medium',
+      is_remote: 'medium',
+      experience_level: 'low',
+      security_clearance_req: 'medium',
+      salary_text: 'medium',
+      salary_type: 'medium',
+      salary_min: 'medium',
+      salary_max: 'medium',
+    });
+  });
+
+  it('prefers selected LinkedIn metadata over conflicting description signals', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <span>On-site</span><span>Part-time</span><span>Entry level</span>
+        <span>USD 60/hr - USD 80/hr</span>
+        <div data-testid="expandable-text-box">
+          <p>This is a full-time role. This position is remote.</p>
+          <p>Candidates need at least 8 years of experience.</p>
+          <p>The salary range is $150,000 - $200,000 per year.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft).toMatchObject({
+      job_type: 'part_time',
+      is_remote: false,
+      experience_level: 'entry',
+      salary_type: 'hourly',
+      hourly_rate_min: 60,
+      hourly_rate_max: 80,
+    });
+    expect(draft.extraction_confidence).toMatchObject({
+      job_type: 'high',
+      is_remote: 'high',
+      experience_level: 'high',
+      salary_type: 'high',
+    });
+  });
+
+  it('ignores incidental job-type and remote words in the expandable description', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          You will support remote offices and collaborate with full-time employees.
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_type).toBeUndefined();
+    expect(draft.is_remote).toBeUndefined();
+  });
+
   it('maps hourly compensation and explicit on-site metadata', async () => {
     document.title = 'Staff Infrastructure Engineer | Acme Corp | LinkedIn';
     setBody(`
@@ -1318,6 +1409,32 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.salary_min).toBeUndefined();
     expect(draft.salary_max).toBeUndefined();
   });
+
+  it.each([
+    'CA$120,000 - CA$150,000 per year',
+    'A$120,000 - A$150,000 per year',
+  ])(
+    'rejects a foreign dollar salary in the expandable description: %s',
+    async (salary) => {
+      document.title = 'Engineer | Acme Corp | LinkedIn';
+      setBody(`
+        <div data-testid="lazy-column">
+          <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+          <p><span>Toronto, ON</span> · <span>Posted today</span></p>
+          <div data-testid="expandable-text-box">
+            The salary range is ${salary}.
+          </div>
+        </div>
+      `);
+
+      const { draft } = await extractJobDraft(LINKEDIN);
+
+      expect(draft.salary_text).toBeUndefined();
+      expect(draft.salary_type).toBeUndefined();
+      expect(draft.salary_min).toBeUndefined();
+      expect(draft.salary_max).toBeUndefined();
+    },
+  );
 
   it('does not treat description prose as high-confidence workplace metadata', async () => {
     document.title = 'Engineer | Acme Corp | LinkedIn';
