@@ -54,6 +54,33 @@ const DESCRIPTION_FORBIDDEN_TAGS = [
   'textarea',
 ];
 
+type LinkedinJobTypeMapping = readonly [
+  RegExp,
+  NonNullable<JobDraft['job_type']>,
+];
+
+type LinkedinExperienceLevelMapping = readonly [
+  RegExp,
+  NonNullable<JobDraft['experience_level']>,
+];
+
+const LINKEDIN_JOB_TYPE_MAPPINGS: readonly LinkedinJobTypeMapping[] = [
+  [/^(full[- ]time|permanent)$/i, 'full_time'],
+  [/^part[- ]time$/i, 'part_time'],
+  [/^(contract|contractor|c2c|w2 contract)$/i, 'contract'],
+  [/^(intern|internship)$/i, 'internship'],
+  [/^(temporary|seasonal)$/i, 'temp'],
+  [/^freelance$/i, 'freelance'],
+];
+
+const LINKEDIN_EXPERIENCE_LEVEL_MAPPINGS: readonly LinkedinExperienceLevelMapping[] =
+  [
+    [/^(executive|director)$/i, 'executive'],
+    [/^(mid-senior level|senior)$/i, 'senior'],
+    [/^(associate|mid level|mid-level)$/i, 'mid'],
+    [/^(entry level|entry-level|internship)$/i, 'entry'],
+  ];
+
 function normalizeMarkdown(markdown: string): string {
   return markdown
     .split('\n')
@@ -733,21 +760,9 @@ export async function extractJobDraft(detection: {
   function isWithinLinkedinDescription(
     element: Element,
     heading: Element | undefined,
+    stopHeading: Element | undefined,
   ): boolean {
     if (!heading) return false;
-    const startLevel = headingLevel(heading) ?? 2;
-    const root = findLastLinkedinLazyColumn() ?? document;
-    const stopHeading = Array.from(
-      root.querySelectorAll('h1, h2, h3, h4, h5, h6'),
-    ).find(
-      (candidate) =>
-        candidate !== heading &&
-        Boolean(
-          heading.compareDocumentPosition(candidate) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-        ) &&
-        (headingLevel(candidate) ?? 7) <= startLevel,
-    );
     const followsHeading = Boolean(
       heading.compareDocumentPosition(element) &
       Node.DOCUMENT_POSITION_FOLLOWING,
@@ -761,14 +776,41 @@ export async function extractJobDraft(detection: {
     return element === heading || (followsHeading && precedesStop);
   }
 
+  function findLinkedinDescriptionStopHeading(
+    root: ParentNode,
+    heading: Element,
+  ): Element | undefined {
+    const startLevel = headingLevel(heading) ?? 2;
+    return Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6')).find(
+      (candidate) =>
+        candidate !== heading &&
+        Boolean(
+          heading.compareDocumentPosition(candidate) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        ) &&
+        (headingLevel(candidate) ?? 7) <= startLevel,
+    );
+  }
+
   function linkedinCompactTexts(
     root: ParentNode,
     descriptionHeading: Element | undefined,
   ): string[] {
+    const descriptionStopHeading = descriptionHeading
+      ? findLinkedinDescriptionStopHeading(root, descriptionHeading)
+      : undefined;
     const values = Array.from(
       root.querySelectorAll<HTMLElement>('button, a, li, span, p'),
     ).flatMap((element) => {
-      if (isWithinLinkedinDescription(element, descriptionHeading)) return [];
+      if (
+        isWithinLinkedinDescription(
+          element,
+          descriptionHeading,
+          descriptionStopHeading,
+        )
+      ) {
+        return [];
+      }
       const text = textOf(element);
       const ariaLabel = element.getAttribute('aria-label')?.trim();
       return [text, ariaLabel];
@@ -789,17 +831,10 @@ export async function extractJobDraft(detection: {
   function mapLinkedinJobType(
     texts: string[],
   ): JobDraft['job_type'] | undefined {
-    const mappings: [RegExp, NonNullable<JobDraft['job_type']>][] = [
-      [/^(full[- ]time|permanent)$/i, 'full_time'],
-      [/^part[- ]time$/i, 'part_time'],
-      [/^(contract|contractor|c2c|w2 contract)$/i, 'contract'],
-      [/^(intern|internship)$/i, 'internship'],
-      [/^(temporary|seasonal)$/i, 'temp'],
-      [/^freelance$/i, 'freelance'],
-    ];
-
     for (const text of texts) {
-      const mapping = mappings.find(([pattern]) => pattern.test(text));
+      const mapping = LINKEDIN_JOB_TYPE_MAPPINGS.find(([pattern]) =>
+        pattern.test(text),
+      );
       if (mapping) return mapping[1];
     }
     return undefined;
@@ -808,15 +843,10 @@ export async function extractJobDraft(detection: {
   function mapLinkedinExperienceLevel(
     texts: string[],
   ): JobDraft['experience_level'] | undefined {
-    const mappings: [RegExp, NonNullable<JobDraft['experience_level']>][] = [
-      [/^(executive|director)$/i, 'executive'],
-      [/^(mid-senior level|senior)$/i, 'senior'],
-      [/^(associate|mid level|mid-level)$/i, 'mid'],
-      [/^(entry level|entry-level|internship)$/i, 'entry'],
-    ];
-
     for (const text of texts) {
-      const mapping = mappings.find(([pattern]) => pattern.test(text));
+      const mapping = LINKEDIN_EXPERIENCE_LEVEL_MAPPINGS.find(([pattern]) =>
+        pattern.test(text),
+      );
       if (mapping) return mapping[1];
     }
     return undefined;
