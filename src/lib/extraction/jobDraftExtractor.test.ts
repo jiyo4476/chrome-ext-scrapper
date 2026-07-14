@@ -89,6 +89,23 @@ describe('extractJobDraft — JSON-LD source', () => {
     expect(draft.job_description).not.toContain('evil.example');
   });
 
+  it('does not apply LinkedIn upsell filtering to generic descriptions', async () => {
+    const jsonLd = document.createElement('script');
+    jsonLd.type = 'application/ld+json';
+    jsonLd.textContent = JSON.stringify({
+      '@type': 'JobPosting',
+      title: 'Growth Engineer',
+      description:
+        '<div><p>Compare professional plans.</p><p><a href="https://www.linkedin.com/premium/products/?upsellSlotId=JDP_AIQ_COMPANY_INSIGHTS_STATIC">View LinkedIn Premium</a></p></div>',
+    });
+    document.head.append(jsonLd);
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_description).toContain('Compare professional plans.');
+    expect(draft.job_description).toContain('View LinkedIn Premium');
+  });
+
   it('preserves text inside benign wrappers and unsupported table structure', async () => {
     const jsonLd = document.createElement('script');
     jsonLd.type = 'application/ld+json';
@@ -935,6 +952,28 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.job_description).not.toContain('Premium');
     expect(draft.job_description).not.toContain('Retry');
     expect(draft.job_description).not.toContain('About the company');
+  });
+
+  it('does not remove broad LinkedIn description content for a bare Premium link', async () => {
+    setBody(`
+      <div data-testid="lazy-column">
+        <div class="jobs-details">
+          <h2>About the job</h2>
+          <p>Build reliable product systems.</p>
+          <a href="https://www.linkedin.com/premium/products/?upsellSlotId=JDP_AIQ_COMPANY_INSIGHTS_STATIC">Optional member benefit</a>
+          <p>Keep legitimate job requirements.</p>
+          <h2>About the company</h2>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toContain('Build reliable product systems.');
+    expect(draft.job_description).toContain('Optional member benefit');
+    expect(draft.job_description).toContain(
+      'Keep legitimate job requirements.',
+    );
   });
 
   it('preserves LinkedIn description structure as Markdown', async () => {

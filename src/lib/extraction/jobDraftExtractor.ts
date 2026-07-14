@@ -116,34 +116,6 @@ const defaultEscape = turndown.escape.bind(turndown);
 turndown.escape = (text: string) =>
   defaultEscape(text).replace(/</g, '\\<').replace(/>/g, '\\>');
 
-// LinkedIn renders an in-feed "Job search faster with Premium" upsell card
-// (headline, bullet skeleton, testimonial, "Retry Premium for $0" CTA) inside
-// the same details container as the real description, with no heading tag
-// to bound it -- so the boundary-widening range capture in
-// descriptionMarkdownAfterHeading() has no way to stop before it. The one
-// stable, content-independent tell across locales/copy variants is the CTA
-// linking into LinkedIn's own premium-upsell path.
-function isLinkedinPremiumUpsellLink(href: string | null): boolean {
-  if (!href) return false;
-  try {
-    const url = new URL(href, document.baseURI);
-    return (
-      /(^|\.)linkedin\.com$/i.test(url.hostname) &&
-      url.pathname.startsWith('/premium/')
-    );
-  } catch {
-    return false;
-  }
-}
-
-function removeNearestTopLevelAncestor(node: Node, root: ParentNode): void {
-  let current = node;
-  while (current.parentNode && current.parentNode !== root) {
-    current = current.parentNode;
-  }
-  current.parentNode?.removeChild(current);
-}
-
 function htmlToSafeMarkdown(html: string | Node): string {
   // RETURN_DOM_FRAGMENT hands back DOMPurify's own sanitized DOM tree
   // directly, so the sanitized markup is never re-serialized to a string and
@@ -163,10 +135,6 @@ function htmlToSafeMarkdown(html: string | Node): string {
     'a[href]',
   )) {
     const rawHref = link.getAttribute('href');
-    if (isLinkedinPremiumUpsellLink(rawHref)) {
-      removeNearestTopLevelAncestor(link, sanitizedFragment);
-      continue;
-    }
     try {
       const url = new URL(rawHref ?? '', document.baseURI);
       if (!['http:', 'https:', 'mailto:'].includes(url.protocol)) {
@@ -838,6 +806,53 @@ export async function extractJobDraft(detection: {
     return match?.[1] ? Number(match[1]) : undefined;
   }
 
+  function isLinkedinCompanyInsightsUpsellLink(href: string | null): boolean {
+    if (!href) return false;
+    try {
+      const url = new URL(href, document.baseURI);
+      const trackingValues = [
+        url.searchParams.get('upsellOrderOrigin'),
+        url.searchParams.get('upsellSlotId'),
+      ];
+      return (
+        /(^|\.)linkedin\.com$/i.test(url.hostname) &&
+        url.pathname.startsWith('/premium/') &&
+        trackingValues.some((value) =>
+          value?.toLowerCase().includes('jdp_aiq_company_insights'),
+        )
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  // LinkedIn inserts this card inside the bounded About-the-job range without
+  // a heading of its own. Keep this cleanup provider-local, and only remove
+  // the nearest recognized block container with multiple pieces of card
+  // content. A bare Premium link or an unexpected wrapper is left intact
+  // rather than escalating removal to an arbitrary top-level description node.
+  function removeLinkedinCompanyInsightsUpsell(root: ParentNode): void {
+    for (const link of root.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+      if (!isLinkedinCompanyInsightsUpsellLink(link.getAttribute('href'))) {
+        continue;
+      }
+
+      let candidate = link.parentElement;
+      while (candidate) {
+        const isCardBlock = /^(ASIDE|ARTICLE|DIV|SECTION)$/.test(
+          candidate.tagName,
+        );
+        const contentBlocks = candidate.querySelectorAll('p, li').length;
+        if (isCardBlock && contentBlocks >= 2) {
+          candidate.remove();
+          break;
+        }
+        if (candidate.parentNode === root) break;
+        candidate = candidate.parentElement;
+      }
+    }
+  }
+
   // LinkedIn can render the "About the job" heading inside a broad details
   // container that also includes adjacent sections. Read text after the
   // heading in document order, stopping at the next same-or-higher-level
@@ -877,7 +892,9 @@ export async function extractJobDraft(detection: {
         range.setEnd(boundary, boundary.childNodes.length);
       }
 
-      const markdown = htmlToSafeMarkdown(range.cloneContents());
+      const descriptionFragment = range.cloneContents();
+      removeLinkedinCompanyInsightsUpsell(descriptionFragment);
+      const markdown = htmlToSafeMarkdown(descriptionFragment);
       if (markdown) fallbackMarkdown = markdown;
       if (stopHeading && markdown) return markdown;
       if (boundary === scope) break;
