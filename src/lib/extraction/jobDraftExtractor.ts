@@ -881,7 +881,15 @@ export async function extractJobDraft(detection: {
   ): boolean | undefined {
     if (!description) return undefined;
     if (
-      /\b(no (?:security )?clearance (?:is )?required)\b/i.test(description)
+      /\bno (?:[\w/-]+ ){0,4}(?:security )?clearance (?:is )?required\b/i.test(
+        description,
+      ) ||
+      /\b(?:does not|doesn't|do not|don't) require (?:an? )?(?:[\w/-]+ ){0,4}(?:security )?clearance\b/i.test(
+        description,
+      ) ||
+      /\b(?:[\w/-]+ ){0,4}(?:security )?clearance\b[^\n.!?]{0,40}\bnot (?:currently )?required\b/i.test(
+        description,
+      )
     ) {
       return false;
     }
@@ -910,11 +918,14 @@ export async function extractJobDraft(detection: {
         max: number;
       }
     | undefined {
+    const hasUsdMarker = (text: string): boolean =>
+      !/\b(?!US(?:D)?\b)[A-Z]{1,3}\s*\$/i.test(text) &&
+      /(?:\bUSD\b|\bUS\$|(?<![A-Za-z])\$)/i.test(text);
     const salaryText = texts
       .filter(
         (text) =>
           !/\b(?:AUD|CAD|EUR|GBP|NZD)\b/i.test(text) &&
-          /(?:\$|\bUSD\b)/i.test(text) &&
+          hasUsdMarker(text) &&
           /(?:\/\s*(?:yr|year|hr|hour)|per\s+(?:year|hour)|annually|hourly)/i.test(
             text,
           ),
@@ -923,7 +934,9 @@ export async function extractJobDraft(detection: {
     if (!salaryText) return undefined;
 
     const values = Array.from(
-      salaryText.matchAll(/(?:\$|\bUSD\s*)([\d,.]+)\s*([kK])?/g),
+      salaryText.matchAll(
+        /(?:\bUSD\s*\$?|\bUS\$|(?<![A-Za-z])\$)\s*([\d,.]+)\s*([kK])?/gi,
+      ),
     )
       .map((match) => {
         const parsed = Number((match[1] ?? '').replace(/,/g, ''));

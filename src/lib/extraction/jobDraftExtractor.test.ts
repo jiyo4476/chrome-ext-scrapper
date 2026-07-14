@@ -1133,6 +1133,54 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.security_clearance_req).toBeUndefined();
   });
 
+  it.each([
+    'Secret clearance is not required.',
+    'No active Secret clearance is required.',
+    'Secret clearance is preferred, but not required.',
+    'This role does not require a Secret clearance.',
+  ])('recognizes a negated named clearance in "%s"', async (description) => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Austin, TX</span> · <span>Posted today</span></p>
+        <section><h2>About the job</h2><p>${description}</p></section>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.security_clearance_req).toBe(false);
+  });
+
+  it.each([
+    {
+      currency: 'Canadian',
+      salary: 'CA$120,000/yr - CA$150,000/yr',
+    },
+    {
+      currency: 'Australian',
+      salary: 'A$120,000/yr - A$150,000/yr',
+    },
+  ])('rejects a $currency dollar salary label', async ({ salary }) => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Toronto, ON</span> · <span>Posted today</span></p>
+        <span>${salary}</span>
+        <section><h2>About the job</h2><p>Build reliable tools.</p></section>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.salary_text).toBeUndefined();
+    expect(draft.salary_type).toBeUndefined();
+    expect(draft.salary_min).toBeUndefined();
+    expect(draft.salary_max).toBeUndefined();
+  });
+
   it('does not treat description prose as high-confidence workplace metadata', async () => {
     document.title = 'Engineer | Acme Corp | LinkedIn';
     setBody(`
