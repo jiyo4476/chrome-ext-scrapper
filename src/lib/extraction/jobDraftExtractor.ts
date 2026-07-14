@@ -826,11 +826,34 @@ export async function extractJobDraft(detection: {
     }
   }
 
+  function hasLinkedinCompanyInsightsCardStructure(
+    candidate: Element,
+  ): boolean {
+    if (!/^(ASIDE|ARTICLE|DIV|SECTION)$/.test(candidate.tagName)) return false;
+
+    const directChildren = Array.from(candidate.children);
+    const paragraphCount = directChildren.filter(
+      (child) => child.tagName === 'P',
+    ).length;
+    const hasInsightSkeleton = directChildren
+      .filter((child) => /^(OL|UL)$/.test(child.tagName))
+      .some((list) => {
+        const items = Array.from(list.children).filter(
+          (child) => child.tagName === 'LI',
+        );
+        return (
+          items.length >= 3 &&
+          items.every((item) => !(item.textContent ?? '').trim())
+        );
+      });
+
+    return paragraphCount >= 3 && hasInsightSkeleton;
+  }
+
   // LinkedIn inserts this card inside the bounded About-the-job range without
-  // a heading of its own. Keep this cleanup provider-local, and only remove
-  // the nearest recognized block container with multiple pieces of card
-  // content. A bare Premium link or an unexpected wrapper is left intact
-  // rather than escalating removal to an arbitrary top-level description node.
+  // a heading of its own. Keep this cleanup provider-local, and require both
+  // its tracked CTA and observed direct-child structure before removing the
+  // nearest card. A CTA inside a general description wrapper is left intact.
   function removeLinkedinCompanyInsightsUpsell(root: ParentNode): void {
     for (const link of root.querySelectorAll<HTMLAnchorElement>('a[href]')) {
       if (!isLinkedinCompanyInsightsUpsellLink(link.getAttribute('href'))) {
@@ -839,11 +862,7 @@ export async function extractJobDraft(detection: {
 
       let candidate = link.parentElement;
       while (candidate) {
-        const isCardBlock = /^(ASIDE|ARTICLE|DIV|SECTION)$/.test(
-          candidate.tagName,
-        );
-        const contentBlocks = candidate.querySelectorAll('p, li').length;
-        if (isCardBlock && contentBlocks >= 2) {
+        if (hasLinkedinCompanyInsightsCardStructure(candidate)) {
           candidate.remove();
           break;
         }

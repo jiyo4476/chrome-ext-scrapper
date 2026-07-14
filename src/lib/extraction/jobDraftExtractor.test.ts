@@ -931,14 +931,16 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
         <p><span>Austin, TX</span></p>
         <div class="jobs-details">
           <h2>About the job</h2>
-          <p>Build reliable product systems.</p>
-          <div class="premium-upsell-card">
-            <p>Job search faster with Premium</p>
-            <p>Access company insights like strategic priorities, headcount trends, and more</p>
-            <ul><li></li><li></li><li></li></ul>
-            <p>Marc and millions of other members use Premium</p>
-            <a href="https://www.linkedin.com/premium/products/?upsellOrderOrigin=Tracking%3Av1%3Ajdp_aiq_company_insights_static&utype=job&upsellSlotId=JDP_AIQ_COMPANY_INSIGHTS_STATIC">Retry Premium for $0</a>
-            <p>1-month free trial. Easy to cancel. We&rsquo;ll remind you 7 days before your trial ends.</p>
+          <div class="description-wrapper">
+            <p>Build reliable product systems.</p>
+            <div class="premium-upsell-card">
+              <p>Job search faster with Premium</p>
+              <p>Access company insights like strategic priorities, headcount trends, and more</p>
+              <ul><li></li><li></li><li></li></ul>
+              <p>Marc and millions of other members use Premium</p>
+              <a href="https://www.linkedin.com/premium/products/?upsellOrderOrigin=Tracking%3Av1%3Ajdp_aiq_company_insights_static&utype=job&upsellSlotId=JDP_AIQ_COMPANY_INSIGHTS_STATIC">Retry Premium for $0</a>
+              <p>1-month free trial. Easy to cancel. We&rsquo;ll remind you 7 days before your trial ends.</p>
+            </div>
           </div>
           <h2>About the company</h2>
           <p>Acme was founded in 2005.</p>
@@ -954,14 +956,17 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.job_description).not.toContain('About the company');
   });
 
-  it('does not remove broad LinkedIn description content for a bare Premium link', async () => {
+  it('does not remove a general description wrapper containing a tracked Premium link', async () => {
     setBody(`
       <div data-testid="lazy-column">
         <div class="jobs-details">
           <h2>About the job</h2>
-          <p>Build reliable product systems.</p>
-          <a href="https://www.linkedin.com/premium/products/?upsellSlotId=JDP_AIQ_COMPANY_INSIGHTS_STATIC">Optional member benefit</a>
-          <p>Keep legitimate job requirements.</p>
+          <div class="description-wrapper">
+            <p>Build reliable product systems.</p>
+            <p><a href="https://www.linkedin.com/premium/products/?upsellSlotId=JDP_AIQ_COMPANY_INSIGHTS_STATIC">Optional member benefit</a></p>
+            <ul><li>Design APIs</li><li>Review code</li><li>Mentor engineers</li></ul>
+            <p>Keep legitimate job requirements.</p>
+          </div>
           <h2>About the company</h2>
         </div>
       </div>
