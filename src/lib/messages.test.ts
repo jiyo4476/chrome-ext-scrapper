@@ -110,4 +110,47 @@ describe('extension message contracts', () => {
       }),
     ).toMatchObject({ ok: false });
   });
+
+  it('validates popup draft storage requests and responses', () => {
+    const context = { tabId: 42, url: 'https://example.com/jobs/42' };
+    const values = {
+      job_title: '',
+      company_name: '',
+      job_link: '',
+      source_platform: 'other',
+      job_location: '',
+      is_remote: false,
+      job_description: '',
+      external_job_id: '',
+      date_posted: '',
+      job_type: '',
+      experience_level: '',
+      security_clearance_req: false,
+      salary_type: '',
+      salary_min: '',
+      salary_max: '',
+      hourly_rate_min: '',
+      hourly_rate_max: '',
+      salary_text: '',
+      skills: '',
+      software: '',
+      keywords: '',
+      certifications: '',
+    };
+
+    expect(
+      extensionMessageSchema.parse({
+        type: 'SAVE_POPUP_DRAFT',
+        context,
+        values,
+      }),
+    ).toEqual({ type: 'SAVE_POPUP_DRAFT', context, values });
+    expect(
+      extensionResponseSchema.parse({
+        type: 'GET_POPUP_DRAFT_RESULT',
+        ok: true,
+        values,
+      }),
+    ).toEqual({ type: 'GET_POPUP_DRAFT_RESULT', ok: true, values });
+  });
 });

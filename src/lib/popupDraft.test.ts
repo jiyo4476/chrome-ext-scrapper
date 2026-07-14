@@ -13,7 +13,12 @@ const browserMock = vi.hoisted(() => ({
 
 vi.mock('wxt/browser', () => ({ browser: browserMock }));
 
-import { clearPopupDraft, getPopupDraft, savePopupDraft } from './popupDraft';
+import {
+  clearPopupDraft,
+  clearPopupDraftForTab,
+  getPopupDraft,
+  savePopupDraft,
+} from './popupDraft';
 
 const context = { tabId: 42, url: 'https://jobs.example.com/role/123' };
 
@@ -75,6 +80,22 @@ describe('popup draft storage', () => {
 
     browserMock.storage.local.remove.mockClear();
     await clearPopupDraft({ ...context, tabId: 99 });
+    expect(browserMock.storage.local.remove).not.toHaveBeenCalled();
+  });
+
+  it('invalidates a stored draft when its tab navigates or closes', async () => {
+    const values = emptyFormValues();
+    browserMock.storage.local.get.mockResolvedValue({
+      'jobTracker.popupDraft': { ...context, values, updatedAt: 1 },
+    });
+
+    await clearPopupDraftForTab(context.tabId);
+    expect(browserMock.storage.local.remove).toHaveBeenCalledWith(
+      'jobTracker.popupDraft',
+    );
+
+    browserMock.storage.local.remove.mockClear();
+    await clearPopupDraftForTab(context.tabId + 1);
     expect(browserMock.storage.local.remove).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,7 @@ import { browser } from 'wxt/browser';
 import { z } from 'zod';
 import type { PopupFormValues } from './popupForm';
 
-const popupFormValuesSchema: z.ZodType<PopupFormValues> = z.object({
+export const popupFormValuesSchema: z.ZodType<PopupFormValues> = z.object({
   job_title: z.string(),
   company_name: z.string(),
   job_link: z.string(),
@@ -27,9 +27,12 @@ const popupFormValuesSchema: z.ZodType<PopupFormValues> = z.object({
   certifications: z.string(),
 });
 
-const popupDraftSchema = z.object({
+export const popupDraftContextSchema = z.object({
   tabId: z.number().int().nonnegative(),
   url: z.string().min(1),
+});
+
+const popupDraftSchema = popupDraftContextSchema.extend({
   values: popupFormValuesSchema,
   updatedAt: z.number().int().nonnegative(),
 });
@@ -77,6 +80,14 @@ export async function clearPopupDraft(
   const result = await browser.storage.local.get(STORAGE_KEY);
   const parsed = popupDraftSchema.safeParse(result[STORAGE_KEY]);
   if (parsed.success && matchesContext(parsed.data, context)) {
+    await browser.storage.local.remove(STORAGE_KEY);
+  }
+}
+
+export async function clearPopupDraftForTab(tabId: number): Promise<void> {
+  const result = await browser.storage.local.get(STORAGE_KEY);
+  const parsed = popupDraftSchema.safeParse(result[STORAGE_KEY]);
+  if (parsed.success && parsed.data.tabId === tabId) {
     await browser.storage.local.remove(STORAGE_KEY);
   }
 }
