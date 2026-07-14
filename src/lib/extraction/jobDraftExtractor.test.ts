@@ -89,6 +89,23 @@ describe('extractJobDraft — JSON-LD source', () => {
     expect(draft.job_description).not.toContain('evil.example');
   });
 
+  it('does not apply LinkedIn upsell filtering to generic descriptions', async () => {
+    const jsonLd = document.createElement('script');
+    jsonLd.type = 'application/ld+json';
+    jsonLd.textContent = JSON.stringify({
+      '@type': 'JobPosting',
+      title: 'Growth Engineer',
+      description:
+        '<div><p>Compare professional plans.</p><p><a href="https://www.linkedin.com/premium/products/?upsellSlotId=JDP_AIQ_COMPANY_INSIGHTS_STATIC">View LinkedIn Premium</a></p></div>',
+    });
+    document.head.append(jsonLd);
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_description).toContain('Compare professional plans.');
+    expect(draft.job_description).toContain('View LinkedIn Premium');
+  });
+
   it('preserves text inside benign wrappers and unsupported table structure', async () => {
     const jsonLd = document.createElement('script');
     jsonLd.type = 'application/ld+json';
@@ -904,6 +921,64 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     );
     expect(draft.job_description).not.toContain('About the company');
     expect(draft.job_description).not.toContain('Company profile text');
+  });
+
+  it('excludes the LinkedIn "Premium" company-insights upsell card from job_description', async () => {
+    setBody(`
+      <h1>Senior Software Engineer</h1>
+      <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+      <div data-testid="lazy-column">
+        <p><span>Austin, TX</span></p>
+        <div class="jobs-details">
+          <h2>About the job</h2>
+          <div class="description-wrapper">
+            <p>Build reliable product systems.</p>
+            <div class="premium-upsell-card">
+              <p>Job search faster with Premium</p>
+              <p>Access company insights like strategic priorities, headcount trends, and more</p>
+              <ul><li></li><li></li><li></li></ul>
+              <p>Marc and millions of other members use Premium</p>
+              <a href="https://www.linkedin.com/premium/products/?upsellOrderOrigin=Tracking%3Av1%3Ajdp_aiq_company_insights_static&utype=job&upsellSlotId=JDP_AIQ_COMPANY_INSIGHTS_STATIC">Retry Premium for $0</a>
+              <p>1-month free trial. Easy to cancel. We&rsquo;ll remind you 7 days before your trial ends.</p>
+            </div>
+          </div>
+          <h2>About the company</h2>
+          <p>Acme was founded in 2005.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe('Build reliable product systems.');
+    expect(draft.job_description).not.toContain('Premium');
+    expect(draft.job_description).not.toContain('Retry');
+    expect(draft.job_description).not.toContain('About the company');
+  });
+
+  it('does not remove a general description wrapper containing a tracked Premium link', async () => {
+    setBody(`
+      <div data-testid="lazy-column">
+        <div class="jobs-details">
+          <h2>About the job</h2>
+          <div class="description-wrapper">
+            <p>Build reliable product systems.</p>
+            <p><a href="https://www.linkedin.com/premium/products/?upsellSlotId=JDP_AIQ_COMPANY_INSIGHTS_STATIC">Optional member benefit</a></p>
+            <ul><li>Design APIs</li><li>Review code</li><li>Mentor engineers</li></ul>
+            <p>Keep legitimate job requirements.</p>
+          </div>
+          <h2>About the company</h2>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toContain('Build reliable product systems.');
+    expect(draft.job_description).toContain('Optional member benefit');
+    expect(draft.job_description).toContain(
+      'Keep legitimate job requirements.',
+    );
   });
 
   it('preserves LinkedIn description structure as Markdown', async () => {

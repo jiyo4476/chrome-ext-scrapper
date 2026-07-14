@@ -134,8 +134,9 @@ function htmlToSafeMarkdown(html: string | Node): string {
   for (const link of sanitizedFragment.querySelectorAll<HTMLAnchorElement>(
     'a[href]',
   )) {
+    const rawHref = link.getAttribute('href');
     try {
-      const url = new URL(link.getAttribute('href') ?? '', document.baseURI);
+      const url = new URL(rawHref ?? '', document.baseURI);
       if (!['http:', 'https:', 'mailto:'].includes(url.protocol)) {
         link.removeAttribute('href');
       } else {
@@ -805,6 +806,72 @@ export async function extractJobDraft(detection: {
     return match?.[1] ? Number(match[1]) : undefined;
   }
 
+  function isLinkedinCompanyInsightsUpsellLink(href: string | null): boolean {
+    if (!href) return false;
+    try {
+      const url = new URL(href, document.baseURI);
+      const trackingValues = [
+        url.searchParams.get('upsellOrderOrigin'),
+        url.searchParams.get('upsellSlotId'),
+      ];
+      return (
+        /(^|\.)linkedin\.com$/i.test(url.hostname) &&
+        url.pathname.startsWith('/premium/') &&
+        trackingValues.some((value) =>
+          value?.toLowerCase().includes('jdp_aiq_company_insights'),
+        )
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function hasLinkedinCompanyInsightsCardStructure(
+    candidate: Element,
+  ): boolean {
+    if (!/^(ASIDE|ARTICLE|DIV|SECTION)$/.test(candidate.tagName)) return false;
+
+    const directChildren = Array.from(candidate.children);
+    const paragraphCount = directChildren.filter(
+      (child) => child.tagName === 'P',
+    ).length;
+    const hasInsightSkeleton = directChildren
+      .filter((child) => /^(OL|UL)$/.test(child.tagName))
+      .some((list) => {
+        const items = Array.from(list.children).filter(
+          (child) => child.tagName === 'LI',
+        );
+        return (
+          items.length >= 3 &&
+          items.every((item) => !(item.textContent ?? '').trim())
+        );
+      });
+
+    return paragraphCount >= 3 && hasInsightSkeleton;
+  }
+
+  // LinkedIn inserts this card inside the bounded About-the-job range without
+  // a heading of its own. Keep this cleanup provider-local, and require both
+  // its tracked CTA and observed direct-child structure before removing the
+  // nearest card. A CTA inside a general description wrapper is left intact.
+  function removeLinkedinCompanyInsightsUpsell(root: ParentNode): void {
+    for (const link of root.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+      if (!isLinkedinCompanyInsightsUpsellLink(link.getAttribute('href'))) {
+        continue;
+      }
+
+      let candidate = link.parentElement;
+      while (candidate) {
+        if (hasLinkedinCompanyInsightsCardStructure(candidate)) {
+          candidate.remove();
+          break;
+        }
+        if (candidate.parentNode === root) break;
+        candidate = candidate.parentElement;
+      }
+    }
+  }
+
   // LinkedIn can render the "About the job" heading inside a broad details
   // container that also includes adjacent sections. Read text after the
   // heading in document order, stopping at the next same-or-higher-level
@@ -844,7 +911,9 @@ export async function extractJobDraft(detection: {
         range.setEnd(boundary, boundary.childNodes.length);
       }
 
-      const markdown = htmlToSafeMarkdown(range.cloneContents());
+      const descriptionFragment = range.cloneContents();
+      removeLinkedinCompanyInsightsUpsell(descriptionFragment);
+      const markdown = htmlToSafeMarkdown(descriptionFragment);
       if (markdown) fallbackMarkdown = markdown;
       if (stopHeading && markdown) return markdown;
       if (boundary === scope) break;
