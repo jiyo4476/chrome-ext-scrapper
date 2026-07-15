@@ -205,7 +205,7 @@ async function extractActiveTab(): Promise<ExtensionResponse> {
   if (!isAutoScrapeUrl(tab.url ?? '')) {
     return errorResponse(
       'DOMAIN_NOT_SUPPORTED',
-      'Open a LinkedIn, Indeed, Glassdoor, or Dice job page before scanning.',
+      'Open a specific job posting on LinkedIn, Indeed, Glassdoor, Dice, Greenhouse, Lever, Workday, Wellfound, or Built In before scanning.',
     );
   }
 

@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import builtInFixture from '../../../fixtures/html/builtin-colorado-basic.html?raw';
+import builtInRemoteFixture from '../../../fixtures/html/builtin-colorado-remote.html?raw';
+import diceFixture from '../../../fixtures/html/dice-basic.html?raw';
+import greenhouseFixture from '../../../fixtures/html/greenhouse-ats-basic.html?raw';
+import leverFixture from '../../../fixtures/html/lever-basic.html?raw';
+import wellfoundFixture from '../../../fixtures/html/wellfound-basic.html?raw';
+import workdayFixture from '../../../fixtures/html/workday-basic.html?raw';
 import { extractJobDraft } from './jobDraftExtractor';
 
 function setHead(html: string): void {
@@ -12,6 +19,13 @@ function setBody(html: string): void {
 
 function setLocation(url: string): void {
   vi.stubGlobal('location', new URL(url));
+}
+
+function loadFixture(html: string, url: string): void {
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  document.head.innerHTML = parsed.head.innerHTML;
+  document.body.innerHTML = parsed.body.innerHTML;
+  setLocation(url);
 }
 
 const OTHER = { platform: 'other' as const, confidence: 'low' as const };
@@ -67,6 +81,36 @@ describe('extractJobDraft — JSON-LD source', () => {
     // job_title only has a single jsonld candidate here (h1 text matches
     // exactly, so it collapses to one distinct value) -- no picker needed.
     expect(candidates.company_name).toBeUndefined();
+  });
+
+  it('joins multiple JSON-LD jobLocation entries and caps the joined count', async () => {
+    setHead(`
+      <title>Data Engineer - Data Co</title>
+      <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "JobPosting",
+          "title": "Data Engineer",
+          "hiringOrganization": { "@type": "Organization", "name": "Data Co" },
+          "url": "https://example.com/jobs/data-engineer",
+          "jobLocation": [
+            { "address": { "addressLocality": "Austin", "addressRegion": "TX" } },
+            { "address": { "addressLocality": "Denver", "addressRegion": "CO" } },
+            { "address": { "addressLocality": "Chicago", "addressRegion": "IL" } },
+            { "address": { "addressLocality": "Boston", "addressRegion": "MA" } },
+            { "address": { "addressLocality": "Miami", "addressRegion": "FL" } },
+            { "address": { "addressLocality": "Seattle", "addressRegion": "WA" } }
+          ]
+        }
+      </script>
+    `);
+    setBody('<main><h1>Data Engineer</h1></main>');
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_location).toBe(
+      'Austin, TX | Denver, CO | Chicago, IL | Boston, MA | Miami, FL',
+    );
   });
 
   it('sanitizes active content and unsafe links before converting HTML to Markdown', async () => {
@@ -271,6 +315,33 @@ describe('extractJobDraft — JSON-LD source', () => {
     expect(draft.job_title).toBe('Thin Posting');
   });
 
+  it('matches the active JSON-LD posting across trailing-slash and fragment differences', async () => {
+    setLocation('https://example.com/jobs/thin-posting/');
+    setHead(`
+      <script type="application/ld+json">
+        {
+          "@type": "JobPosting",
+          "title": "Thin Posting",
+          "url": "https://example.com/jobs/thin-posting#apply"
+        }
+      </script>
+      <script type="application/ld+json">
+        {
+          "@type": "JobPosting",
+          "title": "Unrelated Recommended Job",
+          "hiringOrganization": { "@type": "Organization", "name": "Other Co" },
+          "description": "A richer related job must not win.",
+          "datePosted": "2026-07-01",
+          "url": "https://example.com/jobs/unrelated"
+        }
+      </script>
+    `);
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_title).toBe('Thin Posting');
+  });
+
   it('resolves a relative JSON-LD url against the page location', async () => {
     setLocation('https://example.com/jobs/data-engineer');
     setHead(`
@@ -394,6 +465,17 @@ describe('extractJobDraft — OpenGraph fallback', () => {
     expect(draft.job_description).toBe('Own our deployment platform.');
     expect(draft.extraction_confidence?.job_title).toBe('medium');
     expect(candidates.job_title).toBeUndefined();
+  });
+
+  it('prefers the live SPA URL when canonical metadata points to the previous job', async () => {
+    setLocation('https://example.com/jobs/current-posting');
+    setHead(`
+      <link rel="canonical" href="https://example.com/jobs/previous-posting" />
+    `);
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_link).toBe('https://example.com/jobs/current-posting');
   });
 
   it('does not use og:site_name as company_name on a known job board', async () => {
@@ -830,6 +912,99 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.job_location).toBeUndefined();
   });
 
+  it('prefers the LinkedIn expandable text box for job_description', async () => {
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Austin, TX</span></p>
+        <h2>About the job</h2>
+        <p>Stale heading-range description.</p>
+        <div data-testid="expandable-text-box">
+          <p>Build <strong>reliable</strong> products.</p>
+          <ul><li>Review code</li><li>Mentor engineers</li></ul>
+          <button>Show more</button>
+          <script>alert('unsafe')</script>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe(
+      'Build **reliable** products.\n\n- Review code\n- Mentor engineers',
+    );
+    expect(draft.job_description).not.toContain('Stale heading-range');
+    expect(draft.job_description).not.toContain('Show more');
+    expect(draft.job_description).not.toContain('unsafe');
+  });
+
+  it('renders only the first LinkedIn expandable text box as job_description', async () => {
+    setBody(`
+      <div data-testid="lazy-column">
+        <div data-testid="expandable-text-box">
+          <p>Build <strong>reliable</strong> product systems.</p>
+          <ul><li>Review code</li><li>Mentor engineers</li></ul>
+        </div>
+      </div>
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span></p>
+        <div data-testid="expandable-text-box">
+          <p>1-month free trial. Easy to cancel. We&rsquo;ll remind you 7 days before your trial ends.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe(
+      'Build **reliable** product systems.\n\n- Review code\n- Mentor engineers',
+    );
+    expect(draft.job_description).not.toContain('1-month free trial');
+    expect(draft.job_description).not.toContain('trial ends');
+  });
+
+  it('excludes every LinkedIn expandable text box from metadata scanning', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="expandable-text-box">
+        <p>Build reliable product systems.</p>
+      </div>
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          <span>Remote</span><span>Full-time</span><span>Executive</span>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_type).toBeUndefined();
+    expect(draft.is_remote).toBeUndefined();
+    expect(draft.experience_level).toBeUndefined();
+  });
+
+  it('does not treat expandable description prose as LinkedIn metadata', async () => {
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span></p>
+        <button><span>On-site</span></button>
+        <button><span>Part-time</span></button>
+        <div data-testid="expandable-text-box">
+          <p>This remote full-time opportunity supports a distributed product.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.is_remote).toBe(false);
+    expect(draft.job_type).toBe('part_time');
+  });
+
   it('extracts job_description from the "About the job" section, excluding the heading text', async () => {
     setBody(`
       <h1>Senior Software Engineer</h1>
@@ -1144,6 +1319,173 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     });
   });
 
+  it('autofills LinkedIn advanced fields from explicit expandable description signals', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          <p>This is a full-time role. This position is remote.</p>
+          <p>Candidates need at least 5 years of experience.</p>
+          <p>The salary range is $120,000 - $150,000 per year.</p>
+          <p>Active Secret clearance required.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft).toMatchObject({
+      job_type: 'full_time',
+      is_remote: true,
+      experience_level: 'senior',
+      security_clearance_req: true,
+      salary_text: '$120,000 - $150,000 per year',
+      salary_type: 'annual',
+      salary_min: 12_000_000,
+      salary_max: 15_000_000,
+    });
+    expect(draft.extraction_confidence).toMatchObject({
+      job_type: 'medium',
+      is_remote: 'medium',
+      experience_level: 'low',
+      security_clearance_req: 'medium',
+      salary_text: 'medium',
+      salary_type: 'medium',
+      salary_min: 'medium',
+      salary_max: 'medium',
+    });
+  });
+
+  it('leaves skills, software, and certifications unset so the backend NLP pass runs', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          <p>Build TypeScript and React services deployed with k8s and PostgreSQL.</p>
+          <p>Our team uses GitHub, Jira, and Visual Studio Code.</p>
+          <p>AWS Certified or CKA credentials are preferred.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.skills).toBeUndefined();
+    expect(draft.software).toBeUndefined();
+    expect(draft.certifications).toBeUndefined();
+  });
+
+  it('prefers selected LinkedIn metadata over conflicting description signals', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <span>On-site</span><span>Part-time</span><span>Entry level</span>
+        <span>USD 60/hr - USD 80/hr</span>
+        <div data-testid="expandable-text-box">
+          <p>This is a full-time role. This position is remote.</p>
+          <p>Candidates need at least 8 years of experience.</p>
+          <p>The salary range is $150,000 - $200,000 per year.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft).toMatchObject({
+      job_type: 'part_time',
+      is_remote: false,
+      experience_level: 'entry',
+      salary_type: 'hourly',
+      hourly_rate_min: 60,
+      hourly_rate_max: 80,
+    });
+    expect(draft.extraction_confidence).toMatchObject({
+      job_type: 'high',
+      is_remote: 'high',
+      experience_level: 'high',
+      salary_type: 'high',
+    });
+  });
+
+  it('ignores incidental job-type and remote words in the expandable description', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          You will support remote offices and collaborate with full-time employees.
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_type).toBeUndefined();
+    expect(draft.is_remote).toBeUndefined();
+  });
+
+  it('honors explicit negation in description employment signals', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          A full-time role is not available. Remote work is not available for this position.
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_type).toBeUndefined();
+    expect(draft.is_remote).toBe(false);
+  });
+
+  it('does not treat biographical years-of-experience prose as a requirement', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          Our leadership team has 20 years of experience building reliable products.
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.experience_level).toBeUndefined();
+  });
+
+  it('does not treat a periodic benefit amount as salary', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          Employees receive a $1,500 per year wellness stipend.
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.salary_text).toBeUndefined();
+    expect(draft.salary_type).toBeUndefined();
+    expect(draft.salary_min).toBeUndefined();
+    expect(draft.salary_max).toBeUndefined();
+  });
+
   it('maps hourly compensation and explicit on-site metadata', async () => {
     document.title = 'Staff Infrastructure Engineer | Acme Corp | LinkedIn';
     setBody(`
@@ -1255,6 +1597,32 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.salary_min).toBeUndefined();
     expect(draft.salary_max).toBeUndefined();
   });
+
+  it.each([
+    'CA$120,000 - CA$150,000 per year',
+    'A$120,000 - A$150,000 per year',
+  ])(
+    'rejects a foreign dollar salary in the expandable description: %s',
+    async (salary) => {
+      document.title = 'Engineer | Acme Corp | LinkedIn';
+      setBody(`
+        <div data-testid="lazy-column">
+          <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+          <p><span>Toronto, ON</span> · <span>Posted today</span></p>
+          <div data-testid="expandable-text-box">
+            The salary range is ${salary}.
+          </div>
+        </div>
+      `);
+
+      const { draft } = await extractJobDraft(LINKEDIN);
+
+      expect(draft.salary_text).toBeUndefined();
+      expect(draft.salary_type).toBeUndefined();
+      expect(draft.salary_min).toBeUndefined();
+      expect(draft.salary_max).toBeUndefined();
+    },
+  );
 
   it('does not treat description prose as high-confidence workplace metadata', async () => {
     document.title = 'Engineer | Acme Corp | LinkedIn';
@@ -1625,5 +1993,255 @@ describe('extractJobDraft — Google Jobs DOM extraction', () => {
     const { draft } = await pending;
 
     expect(draft.job_title).toBeUndefined();
+  });
+});
+
+describe('extractJobDraft — Phase 2 provider fixtures', () => {
+  it('extracts required fields and stable ID from Greenhouse', async () => {
+    loadFixture(
+      greenhouseFixture,
+      'https://boards.greenhouse.io/hiringco/jobs/456789',
+    );
+    const { draft } = await extractJobDraft({
+      platform: 'greenhouse',
+      confidence: 'high',
+      externalJobId: '456789',
+    });
+
+    expect(draft).toMatchObject({
+      source_platform: 'greenhouse',
+      external_job_id: '456789',
+      company_name: 'Hiring Co',
+      job_title: 'Platform Engineer',
+      job_location: 'Denver, CO (Hybrid)',
+      is_remote: false,
+      job_description: 'Operate developer infrastructure.',
+    });
+  });
+
+  it('extracts Lever categories and canonical posting identity', async () => {
+    loadFixture(leverFixture, 'https://jobs.lever.co/acme-robotics/lever-123');
+    const { draft } = await extractJobDraft({
+      platform: 'lever',
+      confidence: 'high',
+      externalJobId: 'lever-123',
+    });
+
+    expect(draft).toMatchObject({
+      source_platform: 'lever',
+      external_job_id: 'lever-123',
+      company_name: 'Acme Robotics',
+      job_title: 'Backend Engineer',
+      job_location: 'Santiago / Latin America',
+      is_remote: true,
+      job_type: 'full_time',
+      keywords: ['Engineering'],
+      job_description: 'Build reliable robotics APIs.',
+      job_link: 'https://jobs.lever.co/acme-robotics/lever-123',
+    });
+  });
+
+  it('treats an explicit hybrid workplace type as non-remote even when the location text also mentions remote', async () => {
+    loadFixture(leverFixture, 'https://jobs.lever.co/acme-robotics/lever-123');
+    document.querySelector('.workplaceTypes')?.replaceChildren('Hybrid');
+    document
+      .querySelector('.location')
+      ?.replaceChildren('Remote-eligible, San Francisco');
+
+    const { draft } = await extractJobDraft({
+      platform: 'lever',
+      confidence: 'high',
+      externalJobId: 'lever-123',
+    });
+
+    expect(draft.is_remote).toBe(false);
+  });
+
+  it('prefers Lever employer metadata over a humanized tenant slug', async () => {
+    loadFixture(leverFixture, 'https://jobs.lever.co/applydigital/lever-123');
+    document.querySelector('.posting-company')?.remove();
+    document
+      .querySelector('meta[property="og:site_name"]')
+      ?.setAttribute('content', 'APPLY');
+
+    const { draft } = await extractJobDraft({
+      platform: 'lever',
+      confidence: 'high',
+      externalJobId: 'lever-123',
+    });
+
+    expect(draft.company_name).toBe('APPLY');
+  });
+
+  it('waits for and extracts Workday requisition metadata', async () => {
+    loadFixture(
+      workdayFixture,
+      'https://acme.myworkdayjobs.com/careers/job/Colorado/Security-Engineer/R-1234',
+    );
+    const { draft } = await extractJobDraft({
+      platform: 'workday',
+      confidence: 'high',
+    });
+
+    expect(draft).toMatchObject({
+      source_platform: 'workday',
+      external_job_id: 'R-1234',
+      company_name: 'Acme Workday',
+      job_title: 'Security Engineer',
+      job_location: 'Remote - Colorado',
+      is_remote: true,
+      date_posted: '2026-07-10',
+      job_type: 'full_time',
+      job_description: 'Protect cloud services.',
+    });
+  });
+
+  it('extracts Dice skills, compensation, and contract type', async () => {
+    loadFixture(
+      diceFixture,
+      'https://www.dice.com/job-detail/123e4567-e89b-12d3-a456-426614174000',
+    );
+    const { draft } = await extractJobDraft({
+      platform: 'dice',
+      confidence: 'high',
+    });
+
+    expect(draft).toMatchObject({
+      source_platform: 'dice',
+      external_job_id: '123e4567-e89b-12d3-a456-426614174000',
+      job_type: 'contract',
+      is_remote: true,
+      salary_text: '$70 - $85 an hour',
+      skills: ['TypeScript', 'React'],
+    });
+  });
+
+  it('bounds Dice heading-based skills before the next section heading', async () => {
+    setLocation(
+      'https://www.dice.com/job-detail/123e4567-e89b-12d3-a456-426614174000',
+    );
+    setBody(`
+      <main>
+        <a href="/job-detail/123e4567-e89b-12d3-a456-426614174000">
+          <h1>Senior Software Engineer</h1>
+        </a>
+        <section data-testid="job-description">Build secure browser tooling.</section>
+        <h2>Skills</h2>
+        <h3>Required</h3>
+        <ul><li>TypeScript</li><li>React</li></ul>
+        <h2>Responsibilities</h2>
+        <ul><li>Deploy production services</li><li>Mentor engineers</li></ul>
+      </main>
+    `);
+
+    const { draft } = await extractJobDraft({
+      platform: 'dice',
+      confidence: 'high',
+    });
+
+    expect(draft.skills).toEqual(['TypeScript', 'React']);
+  });
+
+  it('keeps Dice skills within the draft schema limits', async () => {
+    setLocation(
+      'https://www.dice.com/job-detail/123e4567-e89b-12d3-a456-426614174000',
+    );
+    const skillItems = [
+      `<li>${'x'.repeat(201)}</li>`,
+      ...Array.from(
+        { length: 102 },
+        (_, index) => `<li>Skill ${String(index)}</li>`,
+      ),
+    ].join('');
+    setBody(`
+      <main>
+        <a href="/job-detail/123e4567-e89b-12d3-a456-426614174000">
+          <h1>Senior Software Engineer</h1>
+        </a>
+        <section data-testid="job-description">Build secure browser tooling.</section>
+        <section data-testid="skills"><ul>${skillItems}</ul></section>
+      </main>
+    `);
+
+    const { draft } = await extractJobDraft({
+      platform: 'dice',
+      confidence: 'high',
+    });
+
+    expect(draft.skills).toHaveLength(100);
+    expect(draft.skills?.at(0)).toBe('Skill 0');
+    expect(draft.skills?.at(-1)).toBe('Skill 99');
+  });
+
+  it('preserves Wellfound salary and equity text without inventing bounds', async () => {
+    loadFixture(
+      wellfoundFixture,
+      'https://wellfound.com/jobs/123456-founding-engineer',
+    );
+    const { draft } = await extractJobDraft({
+      platform: 'angellist',
+      confidence: 'high',
+      externalJobId: '123456-founding-engineer',
+    });
+
+    expect(draft).toMatchObject({
+      source_platform: 'angellist',
+      external_job_id: '123456-founding-engineer',
+      company_name: 'Launch Co',
+      job_title: 'Founding Engineer',
+      job_location: 'Remote - US',
+      is_remote: true,
+      salary_text: '$150k – $190k • 0.25% – 0.75% equity',
+      job_type: 'full_time',
+      job_description: 'Build the first product team.',
+    });
+    expect(draft.salary_min).toBeUndefined();
+    expect(draft.salary_max).toBeUndefined();
+  });
+
+  it('extracts Built In JSON-LD graph fields and prefers scoped safe DOM Markdown', async () => {
+    loadFixture(
+      builtInFixture,
+      'https://builtin.com/job/staff-platform-engineer/9764574',
+    );
+    const { draft } = await extractJobDraft({
+      platform: 'direct',
+      confidence: 'high',
+      externalJobId: '9764574',
+    });
+
+    expect(draft).toMatchObject({
+      source_platform: 'direct',
+      external_job_id: '9764574',
+      company_name: 'Peak Systems',
+      job_title: 'Staff Platform Engineer',
+      job_location: 'Denver, CO | Boulder, CO',
+      job_type: 'full_time',
+      date_posted: '2026-07-12',
+      job_link: 'https://builtin.com/job/staff-platform-engineer/9764574',
+    });
+    expect(draft.job_description).toContain('Own the **developer platform**.');
+    expect(draft.job_description).toContain('- Improve reliability');
+    expect(draft.job_description).not.toContain('unsafe');
+    expect(draft.job_description).not.toContain('Stale structured description');
+  });
+
+  it('extracts a Built In remote posting without inventing an onsite location', async () => {
+    loadFixture(
+      builtInRemoteFixture,
+      'https://builtin.com/job/remote-product-engineer/9880001',
+    );
+    const { draft } = await extractJobDraft({
+      platform: 'direct',
+      confidence: 'high',
+      externalJobId: '9880001',
+    });
+
+    expect(draft).toMatchObject({
+      external_job_id: '9880001',
+      job_location: 'Remote, United States',
+      is_remote: true,
+      job_description: 'Ship a distributed product.',
+    });
   });
 });
