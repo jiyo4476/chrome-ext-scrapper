@@ -912,6 +912,99 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.job_location).toBeUndefined();
   });
 
+  it('prefers the LinkedIn expandable text box for job_description', async () => {
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Austin, TX</span></p>
+        <h2>About the job</h2>
+        <p>Stale heading-range description.</p>
+        <div data-testid="expandable-text-box">
+          <p>Build <strong>reliable</strong> products.</p>
+          <ul><li>Review code</li><li>Mentor engineers</li></ul>
+          <button>Show more</button>
+          <script>alert('unsafe')</script>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe(
+      'Build **reliable** products.\n\n- Review code\n- Mentor engineers',
+    );
+    expect(draft.job_description).not.toContain('Stale heading-range');
+    expect(draft.job_description).not.toContain('Show more');
+    expect(draft.job_description).not.toContain('unsafe');
+  });
+
+  it('renders only the first LinkedIn expandable text box as job_description', async () => {
+    setBody(`
+      <div data-testid="lazy-column">
+        <div data-testid="expandable-text-box">
+          <p>Build <strong>reliable</strong> product systems.</p>
+          <ul><li>Review code</li><li>Mentor engineers</li></ul>
+        </div>
+      </div>
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span></p>
+        <div data-testid="expandable-text-box">
+          <p>1-month free trial. Easy to cancel. We&rsquo;ll remind you 7 days before your trial ends.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_description).toBe(
+      'Build **reliable** product systems.\n\n- Review code\n- Mentor engineers',
+    );
+    expect(draft.job_description).not.toContain('1-month free trial');
+    expect(draft.job_description).not.toContain('trial ends');
+  });
+
+  it('excludes every LinkedIn expandable text box from metadata scanning', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="expandable-text-box">
+        <p>Build reliable product systems.</p>
+      </div>
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          <span>Remote</span><span>Full-time</span><span>Executive</span>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_type).toBeUndefined();
+    expect(draft.is_remote).toBeUndefined();
+    expect(draft.experience_level).toBeUndefined();
+  });
+
+  it('does not treat expandable description prose as LinkedIn metadata', async () => {
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span></p>
+        <button><span>On-site</span></button>
+        <button><span>Part-time</span></button>
+        <div data-testid="expandable-text-box">
+          <p>This remote full-time opportunity supports a distributed product.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.is_remote).toBe(false);
+    expect(draft.job_type).toBe('part_time');
+  });
+
   it('extracts job_description from the "About the job" section, excluding the heading text', async () => {
     setBody(`
       <h1>Senior Software Engineer</h1>
@@ -1226,6 +1319,173 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     });
   });
 
+  it('autofills LinkedIn advanced fields from explicit expandable description signals', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          <p>This is a full-time role. This position is remote.</p>
+          <p>Candidates need at least 5 years of experience.</p>
+          <p>The salary range is $120,000 - $150,000 per year.</p>
+          <p>Active Secret clearance required.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft).toMatchObject({
+      job_type: 'full_time',
+      is_remote: true,
+      experience_level: 'senior',
+      security_clearance_req: true,
+      salary_text: '$120,000 - $150,000 per year',
+      salary_type: 'annual',
+      salary_min: 12_000_000,
+      salary_max: 15_000_000,
+    });
+    expect(draft.extraction_confidence).toMatchObject({
+      job_type: 'medium',
+      is_remote: 'medium',
+      experience_level: 'low',
+      security_clearance_req: 'medium',
+      salary_text: 'medium',
+      salary_type: 'medium',
+      salary_min: 'medium',
+      salary_max: 'medium',
+    });
+  });
+
+  it('leaves skills, software, and certifications unset so the backend NLP pass runs', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          <p>Build TypeScript and React services deployed with k8s and PostgreSQL.</p>
+          <p>Our team uses GitHub, Jira, and Visual Studio Code.</p>
+          <p>AWS Certified or CKA credentials are preferred.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.skills).toBeUndefined();
+    expect(draft.software).toBeUndefined();
+    expect(draft.certifications).toBeUndefined();
+  });
+
+  it('prefers selected LinkedIn metadata over conflicting description signals', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <span>On-site</span><span>Part-time</span><span>Entry level</span>
+        <span>USD 60/hr - USD 80/hr</span>
+        <div data-testid="expandable-text-box">
+          <p>This is a full-time role. This position is remote.</p>
+          <p>Candidates need at least 8 years of experience.</p>
+          <p>The salary range is $150,000 - $200,000 per year.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft).toMatchObject({
+      job_type: 'part_time',
+      is_remote: false,
+      experience_level: 'entry',
+      salary_type: 'hourly',
+      hourly_rate_min: 60,
+      hourly_rate_max: 80,
+    });
+    expect(draft.extraction_confidence).toMatchObject({
+      job_type: 'high',
+      is_remote: 'high',
+      experience_level: 'high',
+      salary_type: 'high',
+    });
+  });
+
+  it('ignores incidental job-type and remote words in the expandable description', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          You will support remote offices and collaborate with full-time employees.
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_type).toBeUndefined();
+    expect(draft.is_remote).toBeUndefined();
+  });
+
+  it('honors explicit negation in description employment signals', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          A full-time role is not available. Remote work is not available for this position.
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_type).toBeUndefined();
+    expect(draft.is_remote).toBe(false);
+  });
+
+  it('does not treat biographical years-of-experience prose as a requirement', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          Our leadership team has 20 years of experience building reliable products.
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.experience_level).toBeUndefined();
+  });
+
+  it('does not treat a periodic benefit amount as salary', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          Employees receive a $1,500 per year wellness stipend.
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.salary_text).toBeUndefined();
+    expect(draft.salary_type).toBeUndefined();
+    expect(draft.salary_min).toBeUndefined();
+    expect(draft.salary_max).toBeUndefined();
+  });
+
   it('maps hourly compensation and explicit on-site metadata', async () => {
     document.title = 'Staff Infrastructure Engineer | Acme Corp | LinkedIn';
     setBody(`
@@ -1337,6 +1597,32 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.salary_min).toBeUndefined();
     expect(draft.salary_max).toBeUndefined();
   });
+
+  it.each([
+    'CA$120,000 - CA$150,000 per year',
+    'A$120,000 - A$150,000 per year',
+  ])(
+    'rejects a foreign dollar salary in the expandable description: %s',
+    async (salary) => {
+      document.title = 'Engineer | Acme Corp | LinkedIn';
+      setBody(`
+        <div data-testid="lazy-column">
+          <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+          <p><span>Toronto, ON</span> · <span>Posted today</span></p>
+          <div data-testid="expandable-text-box">
+            The salary range is ${salary}.
+          </div>
+        </div>
+      `);
+
+      const { draft } = await extractJobDraft(LINKEDIN);
+
+      expect(draft.salary_text).toBeUndefined();
+      expect(draft.salary_type).toBeUndefined();
+      expect(draft.salary_min).toBeUndefined();
+      expect(draft.salary_max).toBeUndefined();
+    },
+  );
 
   it('does not treat description prose as high-confidence workplace metadata', async () => {
     document.title = 'Engineer | Acme Corp | LinkedIn';

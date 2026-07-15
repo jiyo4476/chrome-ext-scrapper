@@ -86,6 +86,19 @@ const LINKEDIN_EXPERIENCE_LEVEL_MAPPINGS: readonly LinkedinExperienceLevelMappin
     [/^(entry level|entry-level|internship)$/i, 'entry'],
   ];
 
+const LINKEDIN_REQUIRED_EXPERIENCE_PATTERNS: readonly RegExp[] = [
+  /\b(?:at least|minimum(?: of)?)\s+(\d{1,2})\+?\s+years?(?:\s+of)?[^\n.!?]{0,60}\bexperience\b/i,
+  /\b(?:requires?|needs?)\s+(?:at least\s+|a\s+minimum\s+of\s+)?(\d{1,2})\+?\s+years?(?:\s+of)?[^\n.!?]{0,60}\bexperience\b/i,
+  /\b(\d{1,2})\+\s+years?(?:\s+of)?[^\n.!?]{0,60}\bexperience\b/i,
+  /\b(\d{1,2})\s+years?(?:\s+of)?[^\n.!?]{0,60}\bexperience\b[^\n.!?]{0,40}\b(?:required|minimum)\b/i,
+];
+
+const LINKEDIN_DESCRIPTION_JOB_TYPE_PATTERNS: readonly RegExp[] = [
+  /\b(?:this|the)\s+(?:position|role|job)\s+(?:is|will be)\s+(?:an?\s+)?(full[- ]time|part[- ]time|contract(?:or)?|intern(?:ship)?|temporary|seasonal|freelance)\b/i,
+  /\b(full[- ]time|part[- ]time|contract(?:or)?|intern(?:ship)?|temporary|seasonal|freelance)\s+(?:position|role|job|employment)\b/i,
+  /\b(?:employment|job)\s+type\s*:\s*(full[- ]time|part[- ]time|contract(?:or)?|intern(?:ship)?|temporary|seasonal|freelance)\b/i,
+];
+
 function normalizeMarkdown(markdown: string): string {
   return markdown
     .split('\n')
@@ -1286,6 +1299,13 @@ export async function extractJobDraft(detection: {
     return heading ?? undefined;
   }
 
+  function findLinkedinDescriptionSource(): Element | undefined {
+    return (
+      document.querySelector('[data-testid="expandable-text-box"]') ??
+      findAboutTheJobHeading()
+    );
+  }
+
   function findLinkedinCompany(): Element | undefined {
     const root = findLastLinkedinLazyColumn() ?? document;
     return (
@@ -1331,8 +1351,13 @@ export async function extractJobDraft(detection: {
 
   function linkedinCompactTexts(
     root: ParentNode,
-    descriptionHeading: Element | undefined,
+    descriptionSource: Element | undefined,
   ): string[] {
+    const descriptionHeading =
+      descriptionSource &&
+      !descriptionSource.matches('[data-testid="expandable-text-box"]')
+        ? descriptionSource
+        : undefined;
     const descriptionStopHeading = descriptionHeading
       ? findLinkedinDescriptionStopHeading(root, descriptionHeading)
       : undefined;
@@ -1340,6 +1365,7 @@ export async function extractJobDraft(detection: {
       root.querySelectorAll<HTMLElement>('button, a, li, span, p'),
     ).flatMap((element) => {
       if (
+        element.closest('[data-testid="expandable-text-box"]') ||
         isWithinLinkedinDescription(
           element,
           descriptionHeading,
@@ -1377,6 +1403,33 @@ export async function extractJobDraft(detection: {
     return undefined;
   }
 
+  function mapLinkedinJobTypeFromDescription(
+    description: string | undefined,
+  ): JobDraft['job_type'] | undefined {
+    if (!description) return undefined;
+    for (const pattern of LINKEDIN_DESCRIPTION_JOB_TYPE_PATTERNS) {
+      for (const match of description.matchAll(
+        new RegExp(pattern.source, 'gi'),
+      )) {
+        const value = match[1];
+        const start = match.index;
+        if (!value || start === undefined) continue;
+
+        const before = description.slice(Math.max(0, start - 24), start);
+        const after = description.slice(start + match[0].length, start + 64);
+        if (
+          /\b(?:no|not|never|without)(?:\s+an?)?\s*$/i.test(before) ||
+          /^\s*(?:is|are|will be)\s+(?:not|never|unavailable)\b/i.test(after)
+        ) {
+          continue;
+        }
+
+        return mapLinkedinJobType([value]);
+      }
+    }
+    return undefined;
+  }
+
   function mapLinkedinExperienceLevel(
     texts: string[],
   ): JobDraft['experience_level'] | undefined {
@@ -1405,10 +1458,74 @@ export async function extractJobDraft(detection: {
     return undefined;
   }
 
+  function inferExperienceFromDescription(
+    description: string | undefined,
+  ): JobDraft['experience_level'] | undefined {
+    if (!description) return undefined;
+    const explicit =
+      /\b(entry[- ]level|junior|mid[- ]level|intermediate|senior(?:[- ]level)?|staff|principal|lead|executive|director[- ]level)\s+(?:position|role|job|candidate)\b/i.exec(
+        description,
+      )?.[1];
+    if (explicit) return inferExperienceFromTitle(explicit);
+
+    const yearsMatch = LINKEDIN_REQUIRED_EXPERIENCE_PATTERNS.map((pattern) =>
+      pattern.exec(description),
+    ).find((match) => match !== null);
+    const years = Number(yearsMatch?.[1]);
+    if (!Number.isFinite(years)) return undefined;
+    if (years >= 8) return 'lead';
+    if (years >= 5) return 'senior';
+    if (years >= 3) return 'mid';
+    return 'entry';
+  }
+
   function detectLinkedinRemote(texts: string[]): boolean | undefined {
     if (texts.some((text) => /^remote$/i.test(text))) return true;
     if (texts.some((text) => /^(hybrid|on[- ]site|onsite)$/i.test(text))) {
       return false;
+    }
+    return undefined;
+  }
+
+  function detectLinkedinRemoteFromDescription(
+    description: string | undefined,
+  ): boolean | undefined {
+    if (!description) return undefined;
+    if (
+      /\b(?:this|the)\s+(?:position|role|job)\s+(?:is|will be)\s+(?:not|never)\s+(?:fully\s+)?remote\b/i.test(
+        description,
+      ) ||
+      /\bremote\s+(?:work|position|role|job)\s+(?:is|are|will be)\s+(?:not|never|unavailable)\b/i.test(
+        description,
+      ) ||
+      /\b(?:no|without)\s+remote\s+(?:work|option|position|role|job)\b/i.test(
+        description,
+      )
+    ) {
+      return false;
+    }
+    if (
+      /\b(?:this|the)\s+(?:position|role|job)\s+(?:is|will be)\s+(?:an?\s+)?(?:hybrid|on[- ]site|onsite|in[- ]office)\b/i.test(
+        description,
+      ) ||
+      /\b(?:workplace|work arrangement|work location|location)\s*:\s*(?:hybrid|on[- ]site|onsite|in[- ]office)\b/i.test(
+        description,
+      )
+    ) {
+      return false;
+    }
+    if (
+      /\b(?:this|the)\s+(?:position|role|job)\s+(?:is|will be)\s+(?:fully\s+)?remote\b/i.test(
+        description,
+      ) ||
+      /\b(?:fully\s+)?remote\s+(?:position|role|job|work)\b/i.test(
+        description,
+      ) ||
+      /\b(?:workplace|work arrangement|work location|location)\s*:\s*(?:fully\s+)?remote\b/i.test(
+        description,
+      )
+    ) {
+      return true;
     }
     return undefined;
   }
@@ -1494,6 +1611,20 @@ export async function extractJobDraft(detection: {
       min,
       max: values[1] ?? min,
     };
+  }
+
+  function extractLinkedinSalarySignals(
+    description: string | undefined,
+  ): string[] {
+    if (!description) return [];
+    const amount = String.raw`(?:USD\s*\$?|US\$|(?<![A-Za-z])\$)\s*[\d,.]+\s*[kK]?`;
+    const range = new RegExp(
+      String.raw`\b(?:base\s+)?(?:salary|pay|compensation|wage|rate)\b[^.!?]{0,80}?(${amount}(?:\s*(?:-|–|—|to)\s*${amount})?\s*(?:\/\s*(?:yr|year|hr|hour)|per\s+(?:year|hour)|annually|hourly))`,
+      'gi',
+    );
+    return Array.from(description.matchAll(range), (match) =>
+      (match[1] ?? '').trim(),
+    ).filter(Boolean);
   }
 
   function linkedinLocationScore(text: string): number {
@@ -1691,6 +1822,21 @@ export async function extractJobDraft(detection: {
     return fallbackMarkdown;
   }
 
+  function linkedinDescriptionMarkdown(source: Element): string | undefined {
+    if (!source.matches('[data-testid="expandable-text-box"]')) {
+      return descriptionMarkdownAfterHeading(source);
+    }
+
+    const description = source.cloneNode(true) as Element;
+    removeLinkedinCompanyInsightsUpsell(description);
+    for (const control of description.querySelectorAll(
+      'button, [role="button"]',
+    )) {
+      control.remove();
+    }
+    return elementToSafeMarkdown(description);
+  }
+
   async function extractLinkedinDom(): Promise<void> {
     const { company, title } = parseLinkedinPageTitle(document.title);
     // Both fields come from an unambiguous pipe-delimited split, so both
@@ -1709,13 +1855,17 @@ export async function extractJobDraft(detection: {
     // selectors (rendered after the SPA hydrates) are the only signal
     // available -- wait on all three together in one observer.
     const [companyEl, locationEl, descriptionEl] = await waitForEach(
-      [findLinkedinCompany, findLinkedinLocation, findAboutTheJobHeading],
+      [
+        findLinkedinCompany,
+        findLinkedinLocation,
+        findLinkedinDescriptionSource,
+      ],
       800,
     );
     addCandidate('company_name', textOf(companyEl), 'dom', 'high');
     addCandidate('job_location', textOf(locationEl), 'dom', 'medium');
     const description = descriptionEl
-      ? descriptionMarkdownAfterHeading(descriptionEl)
+      ? linkedinDescriptionMarkdown(descriptionEl)
       : undefined;
     addCandidate('job_description', description, 'dom', 'high');
 
@@ -1723,25 +1873,42 @@ export async function extractJobDraft(detection: {
     if (!selectedPane) return;
 
     const compactTexts = linkedinCompactTexts(selectedPane, descriptionEl);
-    addCandidate('job_type', mapLinkedinJobType(compactTexts), 'dom', 'high');
-    addCandidate(
-      'is_remote',
-      detectLinkedinRemote(compactTexts),
-      'dom',
-      'high',
-    );
+    const structuredJobType = mapLinkedinJobType(compactTexts);
+    addCandidate('job_type', structuredJobType, 'dom', 'high');
+    if (!structuredJobType) {
+      addCandidate(
+        'job_type',
+        mapLinkedinJobTypeFromDescription(description),
+        'dom',
+        'medium',
+      );
+    }
+    const structuredRemote = detectLinkedinRemote(compactTexts);
+    addCandidate('is_remote', structuredRemote, 'dom', 'high');
+    if (structuredRemote === undefined) {
+      addCandidate(
+        'is_remote',
+        detectLinkedinRemoteFromDescription(description),
+        'dom',
+        'medium',
+      );
+    }
 
     const structuredExperience = mapLinkedinExperienceLevel(compactTexts);
     addCandidate('experience_level', structuredExperience, 'dom', 'high');
     if (!structuredExperience) {
-      addCandidate(
-        'experience_level',
-        inferExperienceFromTitle(
-          title ?? textOf(selectedPane.querySelector('h1')),
-        ),
-        'dom',
-        'medium',
+      const titleExperience = inferExperienceFromTitle(
+        title ?? textOf(selectedPane.querySelector('h1')),
       );
+      addCandidate('experience_level', titleExperience, 'dom', 'medium');
+      if (!titleExperience) {
+        addCandidate(
+          'experience_level',
+          inferExperienceFromDescription(description),
+          'dom',
+          'low',
+        );
+      }
     }
 
     addCandidate(
@@ -1751,16 +1918,30 @@ export async function extractJobDraft(detection: {
       'medium',
     );
 
-    const salary = parseLinkedinSalary(compactTexts);
+    const structuredSalary = parseLinkedinSalary(compactTexts);
+    const salary =
+      structuredSalary ??
+      parseLinkedinSalary(extractLinkedinSalarySignals(description));
     if (salary) {
-      addCandidate('salary_text', salary.text, 'dom', 'high');
-      addCandidate('salary_type', salary.type, 'dom', 'high');
+      const salaryConfidence = structuredSalary ? 'high' : 'medium';
+      addCandidate('salary_text', salary.text, 'dom', salaryConfidence);
+      addCandidate('salary_type', salary.type, 'dom', salaryConfidence);
       if (salary.type === 'annual') {
-        addCandidate('salary_min', Math.round(salary.min * 100), 'dom', 'high');
-        addCandidate('salary_max', Math.round(salary.max * 100), 'dom', 'high');
+        addCandidate(
+          'salary_min',
+          Math.round(salary.min * 100),
+          'dom',
+          salaryConfidence,
+        );
+        addCandidate(
+          'salary_max',
+          Math.round(salary.max * 100),
+          'dom',
+          salaryConfidence,
+        );
       } else {
-        addCandidate('hourly_rate_min', salary.min, 'dom', 'high');
-        addCandidate('hourly_rate_max', salary.max, 'dom', 'high');
+        addCandidate('hourly_rate_min', salary.min, 'dom', salaryConfidence);
+        addCandidate('hourly_rate_max', salary.max, 'dom', salaryConfidence);
       }
     }
   }
