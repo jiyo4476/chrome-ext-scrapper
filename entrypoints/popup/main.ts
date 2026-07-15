@@ -25,6 +25,7 @@ import {
   validateFormValues,
 } from '../../src/lib/popupForm';
 import type { JobDraft } from '../../src/lib/schemas';
+import type { PopupDraftContext } from '../../src/lib/popupDraft';
 
 const FIELD_IDS: Record<DraftFormField, string> = {
   job_title: 'job-title',
@@ -74,6 +75,13 @@ const exportButton =
 const saveButton = document.querySelector<HTMLButtonElement>('#save-button');
 
 let saveInFlight = false;
+let formRevision = 0;
+let popupDraftContext: PopupDraftContext | undefined;
+
+form?.addEventListener('input', () => {
+  formRevision += 1;
+  void persistCurrentDraft();
+});
 
 extractButton?.addEventListener('click', () => {
   void extractActiveTab();
@@ -96,6 +104,7 @@ void initializePopup();
 async function initializePopup(): Promise<void> {
   setAuthStatus('Checking sign-in status…');
   setSignInDisabled(true);
+  popupDraftContext = await getActiveTabContext();
 
   try {
     const rawResponse: unknown = await browser.runtime.sendMessage({
@@ -108,7 +117,7 @@ async function initializePopup(): Promise<void> {
       response.authenticated
     ) {
       showApp();
-      await autoExtractIfEnabled();
+      await restoreDraftOrExtract();
       return;
     }
     showAuthGate();
@@ -154,9 +163,39 @@ async function signIn(): Promise<void> {
       return;
     }
     showApp();
-    await autoExtractIfEnabled();
+    await restoreDraftOrExtract();
   } catch {
     showAuthGate('Could not complete Authentik sign-in. Try again.');
+  }
+}
+
+async function restoreDraftOrExtract(): Promise<void> {
+  if (popupDraftContext) {
+    try {
+      const storedValues = await requestPopupDraft(popupDraftContext);
+      if (storedValues) {
+        applyFormValues(storedValues);
+        setStatus('Restored your unsaved changes.', 'status');
+        return;
+      }
+    } catch {
+      // Storage failure should not prevent the existing extraction workflow.
+    }
+  }
+
+  await autoExtractIfEnabled();
+}
+
+async function getActiveTabContext(): Promise<PopupDraftContext | undefined> {
+  try {
+    const [tab] = await browser.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    if (tab?.id === undefined || !tab.url) return undefined;
+    return { tabId: tab.id, url: tab.url };
+  } catch {
+    return undefined;
   }
 }
 
@@ -218,6 +257,7 @@ async function saveJob(): Promise<void> {
   }
 
   saveInFlight = true;
+  const submittedRevision = formRevision;
   setStatus('Saving job…', 'status');
   setSaveDisabled(true);
 
@@ -228,6 +268,20 @@ async function saveJob(): Promise<void> {
       draft,
     });
     const response = extensionResponseSchema.parse(rawResponse);
+    if (
+      response.ok &&
+      response.type === 'SAVE_JOB_RESULT' &&
+      popupDraftContext
+    ) {
+      if (formRevision === submittedRevision) {
+        await clearCurrentDraft();
+        if (formRevision !== submittedRevision) {
+          await persistCurrentDraft();
+        }
+      } else {
+        await persistCurrentDraft();
+      }
+    }
     renderResponse(response);
   } catch (error) {
     setStatus(
@@ -246,6 +300,8 @@ function enterManualEntry(): void {
   clearFieldErrors();
   renderCandidates(undefined);
   applyFormValues(emptyFormValues());
+  formRevision += 1;
+  void persistCurrentDraft();
   setStatus('Manual entry. Fill in the fields and save.', 'status');
   focusField('job_title');
 }
@@ -296,6 +352,8 @@ function renderResponse(response: ExtensionResponse): void {
 
   if (response.type === 'EXTRACT_ACTIVE_TAB_RESULT') {
     applyFormValues(draftToFormValues(response.draft));
+    formRevision += 1;
+    void persistCurrentDraft();
     renderCandidates(response.candidates);
     setStatus('Review the extracted fields before saving.', 'status');
     return;
@@ -369,6 +427,57 @@ function renderCandidates(candidates: ExtractionCandidates | undefined): void {
 function selectCandidate(field: DraftFormField, value: unknown): void {
   const next = applyCandidateSelection(readFormValues(), field, value);
   applyFormValues(next);
+  formRevision += 1;
+  void persistCurrentDraft();
+}
+
+async function requestPopupDraft(
+  context: PopupDraftContext,
+): Promise<PopupFormValues | undefined> {
+  const rawResponse: unknown = await browser.runtime.sendMessage({
+    type: 'GET_POPUP_DRAFT',
+    context,
+  });
+  const response = extensionResponseSchema.parse(rawResponse);
+  if (!response.ok || response.type !== 'GET_POPUP_DRAFT_RESULT') {
+    throw new Error('Could not read the popup draft.');
+  }
+  return response.values;
+}
+
+async function persistCurrentDraft(): Promise<void> {
+  if (!popupDraftContext) return;
+
+  try {
+    const rawResponse: unknown = await browser.runtime.sendMessage({
+      type: 'SAVE_POPUP_DRAFT',
+      context: popupDraftContext,
+      values: readFormValues(),
+    });
+    const response = extensionResponseSchema.parse(rawResponse);
+    if (!response.ok || response.type !== 'SAVE_POPUP_DRAFT_RESULT') {
+      throw new Error('Could not store the popup draft.');
+    }
+  } catch {
+    // Draft persistence is best-effort and must not block popup editing.
+  }
+}
+
+async function clearCurrentDraft(): Promise<void> {
+  if (!popupDraftContext) return;
+
+  try {
+    const rawResponse: unknown = await browser.runtime.sendMessage({
+      type: 'CLEAR_POPUP_DRAFT',
+      context: popupDraftContext,
+    });
+    const response = extensionResponseSchema.parse(rawResponse);
+    if (!response.ok || response.type !== 'CLEAR_POPUP_DRAFT_RESULT') {
+      throw new Error('Could not clear the popup draft.');
+    }
+  } catch {
+    // A storage failure should not turn a successful job save into an error.
+  }
 }
 
 function formatSaveResult(result: SaveJobResult): string {

@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { popupDraftContextSchema } from './popupDraft';
+import { popupFormValuesSchema } from './popupForm';
 import { publicSettingsSchema, publicSettingsUpdateSchema } from './settings';
 import { jobDraftSchema, scrapePayloadSchema } from './schemas';
 
@@ -18,6 +20,7 @@ export const extensionErrorCodeSchema = z.enum([
   'API_UNEXPECTED_RESPONSE',
   'OAUTH_FAILED',
   'SAVE_IN_PROGRESS',
+  'STORAGE_FAILED',
 ]);
 
 export const extensionErrorSchema = z.object({
@@ -58,6 +61,22 @@ export const getAuthStatusRequestSchema = z.object({
 
 export const testConnectionRequestSchema = z.object({
   type: z.literal('TEST_CONNECTION'),
+});
+
+export const getPopupDraftRequestSchema = z.object({
+  type: z.literal('GET_POPUP_DRAFT'),
+  context: popupDraftContextSchema,
+});
+
+export const savePopupDraftRequestSchema = z.object({
+  type: z.literal('SAVE_POPUP_DRAFT'),
+  context: popupDraftContextSchema,
+  values: popupFormValuesSchema,
+});
+
+export const clearPopupDraftRequestSchema = z.object({
+  type: z.literal('CLEAR_POPUP_DRAFT'),
+  context: popupDraftContextSchema,
 });
 
 export const extractionCandidateSchema = z.object({
@@ -128,6 +147,22 @@ export const getAuthStatusResponseSchema = z.object({
   authenticated: z.boolean(),
 });
 
+export const getPopupDraftResponseSchema = z.object({
+  type: z.literal('GET_POPUP_DRAFT_RESULT'),
+  ok: z.literal(true),
+  values: popupFormValuesSchema.optional(),
+});
+
+export const savePopupDraftResponseSchema = z.object({
+  type: z.literal('SAVE_POPUP_DRAFT_RESULT'),
+  ok: z.literal(true),
+});
+
+export const clearPopupDraftResponseSchema = z.object({
+  type: z.literal('CLEAR_POPUP_DRAFT_RESULT'),
+  ok: z.literal(true),
+});
+
 export const extensionErrorResponseSchema = z.object({
   type: z.literal('ERROR'),
   ok: z.literal(false),
@@ -143,6 +178,9 @@ export const extensionMessageSchema = z.discriminatedUnion('type', [
   oauthSignOutRequestSchema,
   getAuthStatusRequestSchema,
   testConnectionRequestSchema,
+  getPopupDraftRequestSchema,
+  savePopupDraftRequestSchema,
+  clearPopupDraftRequestSchema,
 ]);
 
 export const extensionResponseSchema = z.union([
@@ -154,6 +192,9 @@ export const extensionResponseSchema = z.union([
   oauthSignOutResponseSchema,
   testConnectionResponseSchema,
   getAuthStatusResponseSchema,
+  getPopupDraftResponseSchema,
+  savePopupDraftResponseSchema,
+  clearPopupDraftResponseSchema,
   extensionErrorResponseSchema,
 ]);
 

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { type JobDraft, jobDraftSchema } from './schemas';
 
 /**
@@ -32,30 +33,32 @@ const NUMBER_FIELDS = new Set<DraftFormField>([
  * stored as strings too -- an empty string means "unset" -- and are
  * validated/coerced by {@link jobDraftSchema} in {@link formValuesToDraft}.
  */
-export interface PopupFormValues {
-  job_title: string;
-  company_name: string;
-  job_link: string;
-  source_platform: string;
-  job_location: string;
-  is_remote: boolean;
-  job_description: string;
-  external_job_id: string;
-  date_posted: string;
-  job_type: string;
-  experience_level: string;
-  security_clearance_req: boolean;
-  salary_type: string;
-  salary_min: string;
-  salary_max: string;
-  hourly_rate_min: string;
-  hourly_rate_max: string;
-  salary_text: string;
-  skills: string;
-  software: string;
-  keywords: string;
-  certifications: string;
-}
+export const popupFormValuesSchema = z.object({
+  job_title: z.string(),
+  company_name: z.string(),
+  job_link: z.string(),
+  source_platform: z.string(),
+  job_location: z.string(),
+  is_remote: z.boolean(),
+  job_description: z.string(),
+  external_job_id: z.string(),
+  date_posted: z.string(),
+  job_type: z.string(),
+  experience_level: z.string(),
+  security_clearance_req: z.boolean(),
+  salary_type: z.string(),
+  salary_min: z.string(),
+  salary_max: z.string(),
+  hourly_rate_min: z.string(),
+  hourly_rate_max: z.string(),
+  salary_text: z.string(),
+  skills: z.string(),
+  software: z.string(),
+  keywords: z.string(),
+  certifications: z.string(),
+});
+
+export type PopupFormValues = z.infer<typeof popupFormValuesSchema>;
 
 /** Canonical field order, matching the popup's DOM layout (common fields
  * first, then advanced fields), used to pick a single "first invalid field"

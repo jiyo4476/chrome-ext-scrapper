@@ -19,6 +19,14 @@ import type { extractJobDraft } from '../src/lib/extraction/jobDraftExtractor';
 import { JOB_DRAFT_EXTRACTOR_BRIDGE_KEY } from '../src/lib/extraction/jobDraftExtractorBridge';
 import { getValidAccessToken, signInWithAuthentik } from '../src/lib/oauth';
 import { buildScrapePayload } from '../src/lib/payload';
+import {
+  clearPopupDraft,
+  clearPopupDraftForTab,
+  getPopupDraft,
+  type PopupDraftContext,
+  savePopupDraft,
+} from '../src/lib/popupDraft';
+import type { PopupFormValues } from '../src/lib/popupForm';
 import { type JobDraft, jobDraftSchema } from '../src/lib/schemas';
 import {
   clearOAuthCredentials,
@@ -28,6 +36,7 @@ import {
 } from '../src/lib/settings';
 
 let saveJobInFlight = false;
+let popupDraftMutationQueue: Promise<void> = Promise.resolve();
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((message: unknown) => {
@@ -39,6 +48,19 @@ export default defineBackground(() => {
     }
 
     return handleMessage(parsed.data);
+  });
+
+  browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    // URL changes are available while activeTab access remains valid (for
+    // example, same-origin SPA navigation). Loading status covers full-page
+    // navigation without adding broad tab/host visibility.
+    if (changeInfo.status === 'loading' || changeInfo.url !== undefined) {
+      void enqueuePopupDraftMutation(() => clearPopupDraftForTab(tabId));
+    }
+  });
+
+  browser.tabs.onRemoved.addListener((tabId) => {
+    void enqueuePopupDraftMutation(() => clearPopupDraftForTab(tabId));
   });
 });
 
@@ -110,10 +132,68 @@ export async function handleMessage(
     return testConnection();
   }
 
+  if (message.type === 'GET_POPUP_DRAFT') {
+    return readPopupDraft(message.context);
+  }
+
+  if (message.type === 'SAVE_POPUP_DRAFT') {
+    return persistPopupDraft(message.context, message.values);
+  }
+
+  if (message.type === 'CLEAR_POPUP_DRAFT') {
+    return removePopupDraft(message.context);
+  }
+
   return errorResponse(
     'MESSAGE_UNHANDLED',
     'No handler is available for this action.',
   );
+}
+
+async function readPopupDraft(
+  context: PopupDraftContext,
+): Promise<ExtensionResponse> {
+  try {
+    await popupDraftMutationQueue.catch(() => undefined);
+    return {
+      type: 'GET_POPUP_DRAFT_RESULT',
+      ok: true,
+      values: await getPopupDraft(context),
+    };
+  } catch {
+    return errorResponse('STORAGE_FAILED', 'Could not read the popup draft.');
+  }
+}
+
+async function persistPopupDraft(
+  context: PopupDraftContext,
+  values: PopupFormValues,
+): Promise<ExtensionResponse> {
+  try {
+    await enqueuePopupDraftMutation(() => savePopupDraft(context, values));
+    return { type: 'SAVE_POPUP_DRAFT_RESULT', ok: true };
+  } catch {
+    return errorResponse('STORAGE_FAILED', 'Could not store the popup draft.');
+  }
+}
+
+async function removePopupDraft(
+  context: PopupDraftContext,
+): Promise<ExtensionResponse> {
+  try {
+    await enqueuePopupDraftMutation(() => clearPopupDraft(context));
+    return { type: 'CLEAR_POPUP_DRAFT_RESULT', ok: true };
+  } catch {
+    return errorResponse('STORAGE_FAILED', 'Could not clear the popup draft.');
+  }
+}
+
+function enqueuePopupDraftMutation(
+  operation: () => Promise<void>,
+): Promise<void> {
+  const next = popupDraftMutationQueue.catch(() => undefined).then(operation);
+  popupDraftMutationQueue = next.catch(() => undefined);
+  return next;
 }
 
 async function extractActiveTab(): Promise<ExtensionResponse> {

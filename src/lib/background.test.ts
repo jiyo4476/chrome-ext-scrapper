@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { JOB_DRAFT_EXTRACTOR_BRIDGE_KEY } from './extraction/jobDraftExtractorBridge';
+import { emptyFormValues } from './popupForm';
 
 const browserMock = vi.hoisted(() => ({
   runtime: {
@@ -9,6 +10,12 @@ const browserMock = vi.hoisted(() => ({
   },
   tabs: {
     query: vi.fn(),
+    onUpdated: {
+      addListener: vi.fn(),
+    },
+    onRemoved: {
+      addListener: vi.fn(),
+    },
   },
   scripting: {
     executeScript: vi.fn(),
@@ -21,6 +28,7 @@ const browserMock = vi.hoisted(() => ({
     local: {
       get: vi.fn(),
       set: vi.fn(),
+      remove: vi.fn(),
     },
   },
 }));
@@ -33,11 +41,14 @@ describe('background save flow', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.restoreAllMocks();
+    vi.clearAllMocks();
     vi.stubGlobal('defineBackground', (setup: () => void) => {
       setup();
     });
     vi.stubGlobal('fetch', vi.fn());
     browserMock.storage.local.get.mockResolvedValue({});
+    browserMock.storage.local.set.mockResolvedValue(undefined);
+    browserMock.storage.local.remove.mockResolvedValue(undefined);
   });
 
   it('surfaces the Authentik sign-in prompt when saving before sign-in', async () => {
@@ -366,5 +377,135 @@ describe('background save flow', () => {
       'http://localhost:3000/api/health/auth',
       expect.objectContaining({ method: 'GET' }),
     );
+  });
+
+  it('serializes popup draft writes in the background worker', async () => {
+    let finishFirstWrite: (() => void) | undefined;
+    browserMock.storage.local.set
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishFirstWrite = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(undefined);
+    const { handleMessage } = await import('../../entrypoints/background');
+    const context = { tabId: 42, url: 'https://example.com/jobs/42' };
+    const firstValues = { ...emptyFormValues(), job_title: 'First' };
+    const secondValues = { ...emptyFormValues(), job_title: 'Second' };
+
+    const first = handleMessage({
+      type: 'SAVE_POPUP_DRAFT',
+      context,
+      values: firstValues,
+    });
+    const second = handleMessage({
+      type: 'SAVE_POPUP_DRAFT',
+      context,
+      values: secondValues,
+    });
+
+    await vi.waitFor(() => {
+      expect(browserMock.storage.local.set).toHaveBeenCalledTimes(1);
+    });
+    finishFirstWrite?.();
+    await expect(first).resolves.toEqual({
+      type: 'SAVE_POPUP_DRAFT_RESULT',
+      ok: true,
+    });
+    await expect(second).resolves.toEqual({
+      type: 'SAVE_POPUP_DRAFT_RESULT',
+      ok: true,
+    });
+    const secondPayload: unknown =
+      browserMock.storage.local.set.mock.calls[1]?.[0];
+    expect(secondPayload).toMatchObject({
+      'jobTracker.popupDraft': { values: secondValues },
+    });
+  });
+
+  it('stores a save-time edit after the successful-save clear', async () => {
+    const operations: string[] = [];
+    const context = { tabId: 42, url: 'https://example.com/jobs/42' };
+    const storedValues = emptyFormValues();
+    const editedValues = { ...storedValues, job_title: 'Edited during save' };
+    browserMock.storage.local.get.mockResolvedValue({
+      'jobTracker.popupDraft': {
+        ...context,
+        values: storedValues,
+        updatedAt: 1,
+      },
+    });
+    browserMock.storage.local.remove.mockImplementation(() => {
+      operations.push('clear');
+      return Promise.resolve();
+    });
+    browserMock.storage.local.set.mockImplementation(() => {
+      operations.push('save edit');
+      return Promise.resolve();
+    });
+    const { handleMessage } = await import('../../entrypoints/background');
+
+    const clear = handleMessage({ type: 'CLEAR_POPUP_DRAFT', context });
+    const saveEdit = handleMessage({
+      type: 'SAVE_POPUP_DRAFT',
+      context,
+      values: editedValues,
+    });
+
+    await expect(clear).resolves.toEqual({
+      type: 'CLEAR_POPUP_DRAFT_RESULT',
+      ok: true,
+    });
+    await expect(saveEdit).resolves.toEqual({
+      type: 'SAVE_POPUP_DRAFT_RESULT',
+      ok: true,
+    });
+    expect(operations).toEqual(['clear', 'save edit']);
+  });
+
+  it('invalidates the matching tab draft on navigation and tab removal', async () => {
+    const context = { tabId: 42, url: 'https://example.com/jobs/42' };
+    browserMock.storage.local.get.mockResolvedValue({
+      'jobTracker.popupDraft': {
+        ...context,
+        values: emptyFormValues(),
+        updatedAt: 1,
+      },
+    });
+    await import('../../entrypoints/background');
+    const rawOnUpdated: unknown =
+      browserMock.tabs.onUpdated.addListener.mock.calls.at(-1)?.[0];
+    const rawOnRemoved: unknown =
+      browserMock.tabs.onRemoved.addListener.mock.calls.at(-1)?.[0];
+    if (
+      typeof rawOnUpdated !== 'function' ||
+      typeof rawOnRemoved !== 'function'
+    ) {
+      throw new Error('Expected background tab lifecycle listeners.');
+    }
+    const onUpdated = rawOnUpdated as (
+      tabId: number,
+      changeInfo: { status?: string; url?: string },
+    ) => void;
+    const onRemoved = rawOnRemoved as (tabId: number) => void;
+
+    onUpdated?.(context.tabId, { status: 'complete' });
+    expect(browserMock.storage.local.remove).not.toHaveBeenCalled();
+
+    onUpdated(context.tabId, { url: 'https://example.com/jobs/43' });
+    await vi.waitFor(() => {
+      expect(browserMock.storage.local.remove).toHaveBeenCalledTimes(1);
+    });
+
+    onUpdated(context.tabId, { status: 'loading' });
+    await vi.waitFor(() => {
+      expect(browserMock.storage.local.remove).toHaveBeenCalledTimes(2);
+    });
+
+    onRemoved(context.tabId);
+    await vi.waitFor(() => {
+      expect(browserMock.storage.local.remove).toHaveBeenCalledTimes(3);
+    });
   });
 });
