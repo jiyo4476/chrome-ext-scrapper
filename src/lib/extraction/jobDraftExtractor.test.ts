@@ -315,6 +315,33 @@ describe('extractJobDraft — JSON-LD source', () => {
     expect(draft.job_title).toBe('Thin Posting');
   });
 
+  it('matches the active JSON-LD posting across trailing-slash and fragment differences', async () => {
+    setLocation('https://example.com/jobs/thin-posting/');
+    setHead(`
+      <script type="application/ld+json">
+        {
+          "@type": "JobPosting",
+          "title": "Thin Posting",
+          "url": "https://example.com/jobs/thin-posting#apply"
+        }
+      </script>
+      <script type="application/ld+json">
+        {
+          "@type": "JobPosting",
+          "title": "Unrelated Recommended Job",
+          "hiringOrganization": { "@type": "Organization", "name": "Other Co" },
+          "description": "A richer related job must not win.",
+          "datePosted": "2026-07-01",
+          "url": "https://example.com/jobs/unrelated"
+        }
+      </script>
+    `);
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_title).toBe('Thin Posting');
+  });
+
   it('resolves a relative JSON-LD url against the page location', async () => {
     setLocation('https://example.com/jobs/data-engineer');
     setHead(`
@@ -1827,6 +1854,37 @@ describe('extractJobDraft — Phase 2 provider fixtures', () => {
     });
 
     expect(draft.skills).toEqual(['TypeScript', 'React']);
+  });
+
+  it('keeps Dice skills within the draft schema limits', async () => {
+    setLocation(
+      'https://www.dice.com/job-detail/123e4567-e89b-12d3-a456-426614174000',
+    );
+    const skillItems = [
+      `<li>${'x'.repeat(201)}</li>`,
+      ...Array.from(
+        { length: 102 },
+        (_, index) => `<li>Skill ${String(index)}</li>`,
+      ),
+    ].join('');
+    setBody(`
+      <main>
+        <a href="/job-detail/123e4567-e89b-12d3-a456-426614174000">
+          <h1>Senior Software Engineer</h1>
+        </a>
+        <section data-testid="job-description">Build secure browser tooling.</section>
+        <section data-testid="skills"><ul>${skillItems}</ul></section>
+      </main>
+    `);
+
+    const { draft } = await extractJobDraft({
+      platform: 'dice',
+      confidence: 'high',
+    });
+
+    expect(draft.skills).toHaveLength(100);
+    expect(draft.skills?.at(0)).toBe('Skill 0');
+    expect(draft.skills?.at(-1)).toBe('Skill 99');
   });
 
   it('preserves Wellfound salary and equity text without inventing bounds', async () => {

@@ -88,13 +88,15 @@ export function isAutoScrapeUrl(url: string): boolean {
     return path.split('/').filter(Boolean).length === 2;
   }
   if (hostMatches(host, 'myworkdayjobs.com')) {
-    return path.includes('/job/');
+    return (
+      path.includes('/job/') && !/\/(?:apply|application)(?:\/|$)/i.test(path)
+    );
   }
   if (hostMatches(host, 'wellfound.com')) {
-    return path.startsWith('/jobs/');
+    return /^\/jobs\/[^/]+$/i.test(path);
   }
   if (hostMatches(host, 'angel.co')) {
-    return path.includes('/jobs/');
+    return /\/jobs\/[^/]+$/i.test(path);
   }
   if (
     hostMatches(host, 'builtin.com') ||

@@ -1,6 +1,11 @@
 import DOMPurify from 'dompurify';
 import TurndownService from 'turndown';
-import type { ApiSourcePlatform, JobDraft } from '../schemas';
+import {
+  MAX_TAG_LENGTH,
+  MAX_TAGS_PER_FIELD,
+  type ApiSourcePlatform,
+  type JobDraft,
+} from '../schemas';
 
 // '#text' must be listed explicitly alongside KEEP_CONTENT: false below --
 // without it, DOMPurify treats bare text nodes as unlisted too and strips
@@ -267,17 +272,21 @@ export async function extractJobDraft(detection: {
   }
 
   function metadataUrlConfidence(url: string): Confidence {
+    return pageIdentityMatches(url) ? 'medium' : 'low';
+  }
+
+  function pageIdentityMatches(url: string): boolean {
     try {
-      const candidate = new URL(url);
+      const candidate = new URL(url, location.href);
       const active = new URL(location.href);
-      const normalizePath = (path: string) => path.replace(/\/$/, '') || '/';
-      return candidate.origin === active.origin &&
+      const normalizePath = (path: string) => path.replace(/\/+$/, '') || '/';
+      return (
+        candidate.origin === active.origin &&
         normalizePath(candidate.pathname) === normalizePath(active.pathname) &&
         candidate.search === active.search
-        ? 'medium'
-        : 'low';
+      );
     } catch {
-      return 'low';
+      return false;
     }
   }
 
@@ -416,9 +425,14 @@ export async function extractJobDraft(detection: {
         rawItems
           .filter((item): item is string => Boolean(item))
           .map((item) => item.trim())
-          .filter((item) => item.length > 0 && !/^skills?$/i.test(item)),
+          .filter(
+            (item) =>
+              item.length > 0 &&
+              item.length <= MAX_TAG_LENGTH &&
+              !/^skills?$/i.test(item),
+          ),
       ),
-    );
+    ).slice(0, MAX_TAGS_PER_FIELD);
     return items.length > 0 ? items : undefined;
   }
 
@@ -653,7 +667,7 @@ export async function extractJobDraft(detection: {
     // that just happens to have more fields populated.
     const currentUrlMatch = postings.find((posting) => {
       const url = posting.url;
-      return typeof url === 'string' && resolveUrl(url) === location.href;
+      return typeof url === 'string' && pageIdentityMatches(url);
     });
     if (currentUrlMatch) return currentUrlMatch;
 
