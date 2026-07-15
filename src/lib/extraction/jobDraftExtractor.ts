@@ -100,6 +100,17 @@ const LINKEDIN_DESCRIPTION_JOB_TYPE_PATTERNS: readonly RegExp[] = [
   /\b(?:employment|job)\s+type\s*:\s*(full[- ]time|part[- ]time|contract(?:or)?|intern(?:ship)?|temporary|seasonal|freelance)\b/i,
 ];
 
+const USD_SALARY_FORMATTER = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
+function formatUsdSalaryRange(min: number, max: number): string {
+  return `${USD_SALARY_FORMATTER.format(min)} - ${USD_SALARY_FORMATTER.format(max)}`;
+}
+
 function normalizeMarkdown(markdown: string): string {
   return markdown
     .split('\n')
@@ -1574,16 +1585,21 @@ export async function extractJobDraft(detection: {
       }
     | undefined {
     const hasUsdMarker = (text: string): boolean =>
-      !/\b(?!US(?:D)?\b)[A-Z]{1,3}\s*\$/i.test(text) &&
+      !/\b(?!US(?:D)?\b)[A-Z]{1,3}\s*\$/.test(text) &&
       /(?:\bUSD\b|\bUS\$|(?<![A-Za-z])\$)/i.test(text);
+    const isUnitlessAnnualUpperBound = (text: string): boolean =>
+      /^\s*(?:(?:base\s+)?(?:salary|pay|compensation)\s*)?up\s+to\s+(?:USD\s*\$?|US\$|(?<![A-Za-z])\$)\s*[\d,.]+\s*k\s*$/i.test(
+        text,
+      );
     const salaryText = texts
       .filter(
         (text) =>
           !/\b(?:AUD|CAD|EUR|GBP|NZD)\b/i.test(text) &&
           hasUsdMarker(text) &&
-          /(?:\/\s*(?:yr|year|hr|hour)|per\s+(?:year|hour)|annually|hourly)/i.test(
+          (/(?:\/\s*(?:yr|year|hr|hour)|per\s+(?:year|hour)|annually|hourly)/i.test(
             text,
-          ),
+          ) ||
+            isUnitlessAnnualUpperBound(text)),
       )
       .sort((a, b) => a.length - b.length)[0];
     if (!salaryText) return undefined;
@@ -1600,17 +1616,20 @@ export async function extractJobDraft(detection: {
           : undefined;
       })
       .filter((value): value is number => value !== undefined);
-    const min = values[0];
-    if (min === undefined) return undefined;
+    const firstValue = values[0];
+    if (firstValue === undefined) return undefined;
 
     const type = /(?:\/\s*(?:hr|hour)|per\s+hour|hourly)/i.test(salaryText)
       ? 'hourly'
       : 'annual';
+    const upperBoundOnly = /\bup\s+to\b/i.test(salaryText);
+    const min = upperBoundOnly ? 0 : firstValue;
+    const max = upperBoundOnly ? firstValue : (values[1] ?? firstValue);
     return {
-      text: salaryText,
+      text: formatUsdSalaryRange(min, max),
       type,
       min,
-      max: values[1] ?? min,
+      max,
     };
   }
 
@@ -1623,9 +1642,15 @@ export async function extractJobDraft(detection: {
       String.raw`\b(?:base\s+)?(?:salary|pay|compensation|wage|rate)\b[^.!?]{0,80}?(${amount}(?:\s*(?:-|–|—|to)\s*${amount})?\s*(?:\/\s*(?:yr|year|hr|hour)|per\s+(?:year|hour)|annually|hourly))`,
       'gi',
     );
-    return Array.from(description.matchAll(range), (match) =>
-      (match[1] ?? '').trim(),
-    ).filter(Boolean);
+    const upperBound = new RegExp(
+      String.raw`\b(?:base\s+)?(?:salary|pay|compensation|wage|rate)\b[^.!?]{0,40}?(up\s+to\s+${amount}(?:\s*(?:\/\s*(?:yr|year)|per\s+year|annually))?)`,
+      'gi',
+    );
+    return [range, upperBound].flatMap((pattern) =>
+      Array.from(description.matchAll(pattern), (match) =>
+        (match[1] ?? '').trim(),
+      ).filter(Boolean),
+    );
   }
 
   function linkedinLocationScore(text: string): number {

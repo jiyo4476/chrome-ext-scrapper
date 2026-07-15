@@ -1329,7 +1329,7 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
       is_remote: true,
       experience_level: 'senior',
       security_clearance_req: true,
-      salary_text: '$120,000/yr - $150,000/yr',
+      salary_text: '$120,000 - $150,000',
       salary_type: 'annual',
       salary_min: 12_000_000,
       salary_max: 15_000_000,
@@ -1358,7 +1358,7 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
       is_remote: true,
       experience_level: 'senior',
       security_clearance_req: true,
-      salary_text: '$120,000 - $150,000 per year',
+      salary_text: '$120,000 - $150,000',
       salary_type: 'annual',
       salary_min: 12_000_000,
       salary_max: 15_000_000,
@@ -1373,6 +1373,69 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
       salary_min: 'medium',
       salary_max: 'medium',
     });
+  });
+
+  it('normalizes a labeled decimal annual pay range', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <span>Base pay range $120,000.00/yr - $170,000.00/yr</span>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft).toMatchObject({
+      salary_text: '$120,000 - $170,000',
+      salary_type: 'annual',
+      salary_min: 12_000_000,
+      salary_max: 17_000_000,
+    });
+  });
+
+  it('normalizes an annual up-to shorthand as a zero-to-maximum range', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <span>up to $135k</span>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft).toMatchObject({
+      salary_text: '$0 - $135,000',
+      salary_type: 'annual',
+      salary_min: 0,
+      salary_max: 13_500_000,
+    });
+  });
+
+  it('normalizes an up-to salary found in the expandable description', async () => {
+    document.title = 'Software Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          <p>The base salary is up to $135k.</p>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft).toMatchObject({
+      salary_text: '$0 - $135,000',
+      salary_type: 'annual',
+      salary_min: 0,
+      salary_max: 13_500_000,
+    });
+    expect(draft.extraction_confidence?.salary_text).toBe('medium');
   });
 
   it('separates description skills, software, and certifications for the backend recovery pass', async () => {
