@@ -86,6 +86,19 @@ const LINKEDIN_EXPERIENCE_LEVEL_MAPPINGS: readonly LinkedinExperienceLevelMappin
     [/^(entry level|entry-level|internship)$/i, 'entry'],
   ];
 
+const LINKEDIN_REQUIRED_EXPERIENCE_PATTERNS: readonly RegExp[] = [
+  /\b(?:at least|minimum(?: of)?)\s+(\d{1,2})\+?\s+years?(?:\s+of)?[^\n.!?]{0,60}\bexperience\b/i,
+  /\b(?:requires?|needs?)\s+(?:at least\s+|a\s+minimum\s+of\s+)?(\d{1,2})\+?\s+years?(?:\s+of)?[^\n.!?]{0,60}\bexperience\b/i,
+  /\b(\d{1,2})\+\s+years?(?:\s+of)?[^\n.!?]{0,60}\bexperience\b/i,
+  /\b(\d{1,2})\s+years?(?:\s+of)?[^\n.!?]{0,60}\bexperience\b[^\n.!?]{0,40}\b(?:required|minimum)\b/i,
+];
+
+const LINKEDIN_DESCRIPTION_JOB_TYPE_PATTERNS: readonly RegExp[] = [
+  /\b(?:this|the)\s+(?:position|role|job)\s+(?:is|will be)\s+(?:an?\s+)?(full[- ]time|part[- ]time|contract(?:or)?|intern(?:ship)?|temporary|seasonal|freelance)\b/i,
+  /\b(full[- ]time|part[- ]time|contract(?:or)?|intern(?:ship)?|temporary|seasonal|freelance)\s+(?:position|role|job|employment)\b/i,
+  /\b(?:employment|job)\s+type\s*:\s*(full[- ]time|part[- ]time|contract(?:or)?|intern(?:ship)?|temporary|seasonal|freelance)\b/i,
+];
+
 function normalizeMarkdown(markdown: string): string {
   return markdown
     .split('\n')
@@ -1340,26 +1353,24 @@ export async function extractJobDraft(detection: {
     root: ParentNode,
     descriptionSource: Element | undefined,
   ): string[] {
-    const descriptionBox = descriptionSource?.matches(
-      '[data-testid="expandable-text-box"]',
-    )
-      ? descriptionSource
-      : undefined;
-    const descriptionStopHeading =
-      descriptionSource && !descriptionBox
-        ? findLinkedinDescriptionStopHeading(root, descriptionSource)
+    const descriptionHeading =
+      descriptionSource &&
+      !descriptionSource.matches('[data-testid="expandable-text-box"]')
+        ? descriptionSource
         : undefined;
+    const descriptionStopHeading = descriptionHeading
+      ? findLinkedinDescriptionStopHeading(root, descriptionHeading)
+      : undefined;
     const values = Array.from(
       root.querySelectorAll<HTMLElement>('button, a, li, span, p'),
     ).flatMap((element) => {
       if (
-        (descriptionBox?.contains(element) ?? false) ||
-        (!descriptionBox &&
-          isWithinLinkedinDescription(
-            element,
-            descriptionSource,
-            descriptionStopHeading,
-          ))
+        element.closest('[data-testid="expandable-text-box"]') ||
+        isWithinLinkedinDescription(
+          element,
+          descriptionHeading,
+          descriptionStopHeading,
+        )
       ) {
         return [];
       }
@@ -1396,17 +1407,27 @@ export async function extractJobDraft(detection: {
     description: string | undefined,
   ): JobDraft['job_type'] | undefined {
     if (!description) return undefined;
-    const match =
-      /\b(?:this|the)\s+(?:position|role|job)\s+(?:is|will be)\s+(?:an?\s+)?(full[- ]time|part[- ]time|contract(?:or)?|intern(?:ship)?|temporary|seasonal|freelance)\b/i.exec(
-        description,
-      ) ??
-      /\b(full[- ]time|part[- ]time|contract(?:or)?|intern(?:ship)?|temporary|seasonal|freelance)\s+(?:position|role|job|employment)\b/i.exec(
-        description,
-      ) ??
-      /\b(?:employment|job)\s+type\s*:\s*(full[- ]time|part[- ]time|contract(?:or)?|intern(?:ship)?|temporary|seasonal|freelance)\b/i.exec(
-        description,
-      );
-    return match?.[1] ? mapLinkedinJobType([match[1]]) : undefined;
+    for (const pattern of LINKEDIN_DESCRIPTION_JOB_TYPE_PATTERNS) {
+      for (const match of description.matchAll(
+        new RegExp(pattern.source, 'gi'),
+      )) {
+        const value = match[1];
+        const start = match.index;
+        if (!value || start === undefined) continue;
+
+        const before = description.slice(Math.max(0, start - 24), start);
+        const after = description.slice(start + match[0].length, start + 64);
+        if (
+          /\b(?:no|not|never|without)(?:\s+an?)?\s*$/i.test(before) ||
+          /^\s*(?:is|are|will be)\s+(?:not|never|unavailable)\b/i.test(after)
+        ) {
+          continue;
+        }
+
+        return mapLinkedinJobType([value]);
+      }
+    }
+    return undefined;
   }
 
   function mapLinkedinExperienceLevel(
@@ -1447,10 +1468,9 @@ export async function extractJobDraft(detection: {
       )?.[1];
     if (explicit) return inferExperienceFromTitle(explicit);
 
-    const yearsMatch =
-      /\b(?:at least|minimum(?: of)?|requires?)?\s*(\d{1,2})\+?\s+years?(?:\s+of)?[^\n.!?]{0,60}\bexperience\b/i.exec(
-        description,
-      );
+    const yearsMatch = LINKEDIN_REQUIRED_EXPERIENCE_PATTERNS.map((pattern) =>
+      pattern.exec(description),
+    ).find((match) => match !== null);
     const years = Number(yearsMatch?.[1]);
     if (!Number.isFinite(years)) return undefined;
     if (years >= 8) return 'lead';
@@ -1471,6 +1491,19 @@ export async function extractJobDraft(detection: {
     description: string | undefined,
   ): boolean | undefined {
     if (!description) return undefined;
+    if (
+      /\b(?:this|the)\s+(?:position|role|job)\s+(?:is|will be)\s+(?:not|never)\s+(?:fully\s+)?remote\b/i.test(
+        description,
+      ) ||
+      /\bremote\s+(?:work|position|role|job)\s+(?:is|are|will be)\s+(?:not|never|unavailable)\b/i.test(
+        description,
+      ) ||
+      /\b(?:no|without)\s+remote\s+(?:work|option|position|role|job)\b/i.test(
+        description,
+      )
+    ) {
+      return false;
+    }
     if (
       /\b(?:this|the)\s+(?:position|role|job)\s+(?:is|will be)\s+(?:an?\s+)?(?:hybrid|on[- ]site|onsite|in[- ]office)\b/i.test(
         description,
@@ -1586,10 +1619,12 @@ export async function extractJobDraft(detection: {
     if (!description) return [];
     const amount = String.raw`(?:USD\s*\$?|US\$|(?<![A-Za-z])\$)\s*[\d,.]+\s*[kK]?`;
     const range = new RegExp(
-      String.raw`${amount}(?:\s*(?:-|–|—|to)\s*${amount})?\s*(?:\/\s*(?:yr|year|hr|hour)|per\s+(?:year|hour)|annually|hourly)`,
+      String.raw`\b(?:base\s+)?(?:salary|pay|compensation|wage|rate)\b[^.!?]{0,80}?(${amount}(?:\s*(?:-|–|—|to)\s*${amount})?\s*(?:\/\s*(?:yr|year|hr|hour)|per\s+(?:year|hour)|annually|hourly))`,
       'gi',
     );
-    return Array.from(description.matchAll(range), (match) => match[0].trim());
+    return Array.from(description.matchAll(range), (match) =>
+      (match[1] ?? '').trim(),
+    ).filter(Boolean);
   }
 
   function linkedinLocationScore(text: string): number {

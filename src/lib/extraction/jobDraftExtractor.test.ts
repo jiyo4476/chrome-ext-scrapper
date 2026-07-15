@@ -964,6 +964,28 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.job_description).not.toContain('trial ends');
   });
 
+  it('excludes every LinkedIn expandable text box from metadata scanning', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="expandable-text-box">
+        <p>Build reliable product systems.</p>
+      </div>
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          <span>Remote</span><span>Full-time</span><span>Executive</span>
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_type).toBeUndefined();
+    expect(draft.is_remote).toBeUndefined();
+    expect(draft.experience_level).toBeUndefined();
+  });
+
   it('does not treat expandable description prose as LinkedIn metadata', async () => {
     setBody(`
       <div data-testid="lazy-column">
@@ -1407,6 +1429,61 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
 
     expect(draft.job_type).toBeUndefined();
     expect(draft.is_remote).toBeUndefined();
+  });
+
+  it('honors explicit negation in description employment signals', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          A full-time role is not available. Remote work is not available for this position.
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.job_type).toBeUndefined();
+    expect(draft.is_remote).toBe(false);
+  });
+
+  it('does not treat biographical years-of-experience prose as a requirement', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          Our leadership team has 20 years of experience building reliable products.
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.experience_level).toBeUndefined();
+  });
+
+  it('does not treat a periodic benefit amount as salary', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Denver, CO</span> · <span>Posted today</span></p>
+        <div data-testid="expandable-text-box">
+          Employees receive a $1,500 per year wellness stipend.
+        </div>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.salary_text).toBeUndefined();
+    expect(draft.salary_type).toBeUndefined();
+    expect(draft.salary_min).toBeUndefined();
+    expect(draft.salary_max).toBeUndefined();
   });
 
   it('maps hourly compensation and explicit on-site metadata', async () => {
