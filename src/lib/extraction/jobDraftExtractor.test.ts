@@ -571,6 +571,23 @@ describe('extractJobDraft — visible-text fallback', () => {
     expect(draft.job_description).toBe('\\<img src=x onerror=alert(1)\\>');
     expect(draft.job_description).not.toMatch(/(^|\n)\s*<img/);
   });
+
+  it('does not derive taxonomy from unbounded page-wide visible text', async () => {
+    setBody(`
+      <h1>Software Engineer</h1>
+      <main>
+        Navigation for Docker training and CISSP articles.
+        This page mentions Python outside a bounded job description.
+      </main>
+    `);
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_description).toContain('Docker training');
+    expect(draft.skills).toBeUndefined();
+    expect(draft.software).toBeUndefined();
+    expect(draft.certifications).toBeUndefined();
+  });
 });
 
 describe('extractJobDraft — candidate review mode', () => {
@@ -1358,7 +1375,7 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     });
   });
 
-  it('leaves skills, software, and certifications unset so the backend NLP pass runs', async () => {
+  it('separates description skills, software, and certifications for the backend recovery pass', async () => {
     document.title = 'Software Engineer | Acme Corp | LinkedIn';
     setBody(`
       <div data-testid="lazy-column">
@@ -1367,16 +1384,31 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
         <div data-testid="expandable-text-box">
           <p>Build TypeScript and React services deployed with k8s and PostgreSQL.</p>
           <p>Our team uses GitHub, Jira, and Visual Studio Code.</p>
-          <p>AWS Certified or CKA credentials are preferred.</p>
+          <p>AWS Certified Solutions Architect or CKA credentials are preferred.</p>
         </div>
       </div>
     `);
 
     const { draft } = await extractJobDraft(LINKEDIN);
 
-    expect(draft.skills).toBeUndefined();
-    expect(draft.software).toBeUndefined();
-    expect(draft.certifications).toBeUndefined();
+    expect(draft.skills).toEqual(['TypeScript']);
+    expect(draft.software).toEqual([
+      'React',
+      'PostgreSQL',
+      'GitHub',
+      'Kubernetes',
+      'Jira',
+      'VS Code',
+    ]);
+    expect(draft.certifications).toEqual([
+      'AWS Certified Solutions Architect',
+      'Kubernetes Administrator',
+    ]);
+    expect(draft.extraction_confidence).toMatchObject({
+      skills: 'low',
+      software: 'low',
+      certifications: 'low',
+    });
   });
 
   it('prefers selected LinkedIn metadata over conflicting description signals', async () => {
@@ -2125,7 +2157,7 @@ describe('extractJobDraft — Phase 2 provider fixtures', () => {
         <a href="/job-detail/123e4567-e89b-12d3-a456-426614174000">
           <h1>Senior Software Engineer</h1>
         </a>
-        <section data-testid="job-description">Build secure browser tooling.</section>
+        <section data-testid="job-description">Build secure browser tooling with Python and Docker. CISSP required.</section>
         <h2>Skills</h2>
         <h3>Required</h3>
         <ul><li>TypeScript</li><li>React</li></ul>
@@ -2139,7 +2171,9 @@ describe('extractJobDraft — Phase 2 provider fixtures', () => {
       confidence: 'high',
     });
 
-    expect(draft.skills).toEqual(['TypeScript', 'React']);
+    expect(draft.skills).toEqual(['TypeScript', 'React', 'Python']);
+    expect(draft.software).toEqual(['Docker']);
+    expect(draft.certifications).toEqual(['CISSP']);
   });
 
   it('keeps Dice skills within the draft schema limits', async () => {

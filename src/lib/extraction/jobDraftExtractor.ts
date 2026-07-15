@@ -6,6 +6,7 @@ import {
   type ApiSourcePlatform,
   type JobDraft,
 } from '../schemas';
+import { extractTaxonomy } from './taxonomyExtractor';
 
 // '#text' must be listed explicitly alongside KEEP_CONTENT: false below --
 // without it, DOMPurify treats bare text nodes as unlisted too and strips
@@ -2320,6 +2321,7 @@ export async function extractJobDraft(detection: {
 
   const draft: Record<string, unknown> = {};
   const confidenceMap: Partial<Record<keyof JobDraft, Confidence>> = {};
+  const selectedSources: Partial<Record<keyof JobDraft, Source>> = {};
   const outCandidates: FieldCandidates = {};
 
   (Object.keys(fieldCandidates) as (keyof JobDraft)[]).forEach((field) => {
@@ -2340,6 +2342,7 @@ export async function extractJobDraft(detection: {
     if (winner) {
       draft[field] = winner.value;
       confidenceMap[field] = winner.confidence;
+      selectedSources[field] = winner.source;
     }
 
     const distinctValues = new Set(list.map((c) => JSON.stringify(c.value)));
@@ -2347,6 +2350,41 @@ export async function extractJobDraft(detection: {
       outCandidates[field] = list;
     }
   });
+
+  // Taxonomy extraction deliberately runs after candidate resolution so it
+  // scans only the selected, sanitized description instead of page-wide text
+  // or an adjacent/stale provider candidate. Provider-supplied values remain
+  // first and description-derived canonical matches are appended.
+  const selectedDescription = draft.job_description;
+  if (
+    typeof selectedDescription === 'string' &&
+    selectedDescription.trim() &&
+    selectedSources.job_description !== 'visible-text'
+  ) {
+    const extracted = extractTaxonomy(selectedDescription);
+    const taxonomyFields = ['skills', 'software', 'certifications'] as const;
+
+    for (const field of taxonomyFields) {
+      const provided = Array.isArray(draft[field])
+        ? (draft[field] as string[])
+        : [];
+      const merged: string[] = [];
+      const seen = new Set<string>();
+
+      for (const value of [...provided, ...extracted[field]]) {
+        const key = value.toLocaleLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(value);
+        if (merged.length === MAX_TAGS_PER_FIELD) break;
+      }
+
+      if (merged.length > 0) {
+        draft[field] = merged;
+        confidenceMap[field] ??= 'low';
+      }
+    }
+  }
 
   if (Object.keys(confidenceMap).length > 0) {
     draft.extraction_confidence = confidenceMap;
