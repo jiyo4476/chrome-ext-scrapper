@@ -42,6 +42,10 @@ function getIndeedJobId(parsed: URL): string | undefined {
   );
 }
 
+// Shared between isAutoScrapeUrl and detectPlatform so the two gates can't
+// silently drift apart on which BuiltIn URLs count as a real job posting.
+const BUILTIN_JOB_PATH = /\/job\/[^/]+\/\d+\/?$/i;
+
 export function isAutoScrapeUrl(url: string): boolean {
   let parsed: URL;
   try {
@@ -93,7 +97,7 @@ export function isAutoScrapeUrl(url: string): boolean {
     hostMatches(host, 'builtin.com') ||
     hostMatches(host, 'builtincolorado.com')
   ) {
-    return /\/job\/[^/]+\/\d+$/i.test(path);
+    return BUILTIN_JOB_PATH.test(path);
   }
   return false;
 }
@@ -175,19 +179,21 @@ function isGoogleHost(host: string): boolean {
 }
 
 export function detectPlatform(url: string): PlatformDetection {
-  let host = '';
+  let parsed: URL | null = null;
   try {
-    host = new URL(url).hostname.toLowerCase();
+    parsed = new URL(url);
   } catch {
-    host = '';
+    parsed = null;
   }
+  const host = parsed?.hostname.toLowerCase() ?? '';
+  const path = parsed?.pathname ?? '';
   const lowerUrl = (url || '').toLowerCase();
 
   if (hostMatches(host, 'linkedin.com')) {
     return { platform: 'linkedin', confidence: 'high' };
   }
   if (hostMatches(host, 'indeed.com')) {
-    const externalJobId = getIndeedJobId(new URL(url));
+    const externalJobId = parsed ? getIndeedJobId(parsed) : undefined;
     return {
       platform: 'indeed',
       confidence: 'high',
@@ -201,7 +207,7 @@ export function detectPlatform(url: string): PlatformDetection {
     return { platform: 'dice', confidence: 'high' };
   }
   if (hostMatches(host, 'greenhouse.io')) {
-    const externalJobId = pathSegmentAfter(new URL(url).pathname, 'jobs');
+    const externalJobId = pathSegmentAfter(path, 'jobs');
     return {
       platform: 'greenhouse',
       confidence: 'high',
@@ -209,7 +215,7 @@ export function detectPlatform(url: string): PlatformDetection {
     };
   }
   if (hostMatches(host, 'lever.co')) {
-    const externalJobId = finalPathSegment(new URL(url).pathname);
+    const externalJobId = finalPathSegment(path);
     return {
       platform: 'lever',
       confidence: 'high',
@@ -220,7 +226,7 @@ export function detectPlatform(url: string): PlatformDetection {
     return { platform: 'workday', confidence: 'high' };
   }
   if (hostMatches(host, 'wellfound.com') || hostMatches(host, 'angel.co')) {
-    const externalJobId = pathSegmentAfter(new URL(url).pathname, 'jobs');
+    const externalJobId = pathSegmentAfter(path, 'jobs');
     return {
       platform: 'angellist',
       confidence: 'high',
@@ -231,8 +237,8 @@ export function detectPlatform(url: string): PlatformDetection {
     hostMatches(host, 'builtin.com') ||
     hostMatches(host, 'builtincolorado.com')
   ) {
-    const externalJobId = finalPathSegment(new URL(url).pathname);
-    if (/\/job\/[^/]+\/\d+\/?$/i.test(new URL(url).pathname)) {
+    if (BUILTIN_JOB_PATH.test(path)) {
+      const externalJobId = finalPathSegment(path);
       return {
         platform: 'direct',
         confidence: 'high',

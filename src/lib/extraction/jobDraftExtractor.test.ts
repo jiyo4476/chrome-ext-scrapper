@@ -83,6 +83,36 @@ describe('extractJobDraft — JSON-LD source', () => {
     expect(candidates.company_name).toBeUndefined();
   });
 
+  it('joins multiple JSON-LD jobLocation entries and caps the joined count', async () => {
+    setHead(`
+      <title>Data Engineer - Data Co</title>
+      <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "JobPosting",
+          "title": "Data Engineer",
+          "hiringOrganization": { "@type": "Organization", "name": "Data Co" },
+          "url": "https://example.com/jobs/data-engineer",
+          "jobLocation": [
+            { "address": { "addressLocality": "Austin", "addressRegion": "TX" } },
+            { "address": { "addressLocality": "Denver", "addressRegion": "CO" } },
+            { "address": { "addressLocality": "Chicago", "addressRegion": "IL" } },
+            { "address": { "addressLocality": "Boston", "addressRegion": "MA" } },
+            { "address": { "addressLocality": "Miami", "addressRegion": "FL" } },
+            { "address": { "addressLocality": "Seattle", "addressRegion": "WA" } }
+          ]
+        }
+      </script>
+    `);
+    setBody('<main><h1>Data Engineer</h1></main>');
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_location).toBe(
+      'Austin, TX | Denver, CO | Chicago, IL | Boston, MA | Miami, FL',
+    );
+  });
+
   it('sanitizes active content and unsafe links before converting HTML to Markdown', async () => {
     const jsonLd = document.createElement('script');
     jsonLd.type = 'application/ld+json';
@@ -408,6 +438,17 @@ describe('extractJobDraft — OpenGraph fallback', () => {
     expect(draft.job_description).toBe('Own our deployment platform.');
     expect(draft.extraction_confidence?.job_title).toBe('medium');
     expect(candidates.job_title).toBeUndefined();
+  });
+
+  it('prefers the live SPA URL when canonical metadata points to the previous job', async () => {
+    setLocation('https://example.com/jobs/current-posting');
+    setHead(`
+      <link rel="canonical" href="https://example.com/jobs/previous-posting" />
+    `);
+
+    const { draft } = await extractJobDraft(OTHER);
+
+    expect(draft.job_link).toBe('https://example.com/jobs/current-posting');
   });
 
   it('does not use og:site_name as company_name on a known job board', async () => {
@@ -1687,6 +1728,22 @@ describe('extractJobDraft — Phase 2 provider fixtures', () => {
     });
   });
 
+  it('treats an explicit hybrid workplace type as non-remote even when the location text also mentions remote', async () => {
+    loadFixture(leverFixture, 'https://jobs.lever.co/acme-robotics/lever-123');
+    document.querySelector('.workplaceTypes')?.replaceChildren('Hybrid');
+    document
+      .querySelector('.location')
+      ?.replaceChildren('Remote-eligible, San Francisco');
+
+    const { draft } = await extractJobDraft({
+      platform: 'lever',
+      confidence: 'high',
+      externalJobId: 'lever-123',
+    });
+
+    expect(draft.is_remote).toBe(false);
+  });
+
   it('prefers Lever employer metadata over a humanized tenant slug', async () => {
     loadFixture(leverFixture, 'https://jobs.lever.co/applydigital/lever-123');
     document.querySelector('.posting-company')?.remove();
@@ -1744,6 +1801,32 @@ describe('extractJobDraft — Phase 2 provider fixtures', () => {
       salary_text: '$70 - $85 an hour',
       skills: ['TypeScript', 'React'],
     });
+  });
+
+  it('bounds Dice heading-based skills before the next section heading', async () => {
+    setLocation(
+      'https://www.dice.com/job-detail/123e4567-e89b-12d3-a456-426614174000',
+    );
+    setBody(`
+      <main>
+        <a href="/job-detail/123e4567-e89b-12d3-a456-426614174000">
+          <h1>Senior Software Engineer</h1>
+        </a>
+        <section data-testid="job-description">Build secure browser tooling.</section>
+        <h2>Skills</h2>
+        <h3>Required</h3>
+        <ul><li>TypeScript</li><li>React</li></ul>
+        <h2>Responsibilities</h2>
+        <ul><li>Deploy production services</li><li>Mentor engineers</li></ul>
+      </main>
+    `);
+
+    const { draft } = await extractJobDraft({
+      platform: 'dice',
+      confidence: 'high',
+    });
+
+    expect(draft.skills).toEqual(['TypeScript', 'React']);
   });
 
   it('preserves Wellfound salary and equity text without inventing bounds', async () => {

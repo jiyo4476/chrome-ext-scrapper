@@ -266,6 +266,21 @@ export async function extractJobDraft(detection: {
     }
   }
 
+  function metadataUrlConfidence(url: string): Confidence {
+    try {
+      const candidate = new URL(url);
+      const active = new URL(location.href);
+      const normalizePath = (path: string) => path.replace(/\/$/, '') || '/';
+      return candidate.origin === active.origin &&
+        normalizePath(candidate.pathname) === normalizePath(active.pathname) &&
+        candidate.search === active.search
+        ? 'medium'
+        : 'low';
+    } catch {
+      return 'low';
+    }
+  }
+
   function queryFirst(
     selectors: string[],
     root: ParentNode = document,
@@ -370,14 +385,18 @@ export async function extractJobDraft(detection: {
 
   function remoteFromText(raw: string | undefined): boolean | undefined {
     if (!raw) return undefined;
+    // Check hybrid/on-site first: callers often concatenate a workplace-type
+    // field with a location string (e.g. "Hybrid" + "Remote-eligible, SF"),
+    // and an explicit hybrid/on-site signal should win over an incidental
+    // "remote" mention elsewhere in the combined text.
+    if (/\b(on[ -]?site|in[ -]?office|hybrid)\b/i.test(raw)) return false;
     if (/\b(remote|work from home|telecommut(?:e|ing))\b/i.test(raw)) {
       return true;
     }
-    if (/\b(on[ -]?site|in[ -]?office|hybrid)\b/i.test(raw)) return false;
     return undefined;
   }
 
-  function structuredItems(root: Element | null): string[] | undefined {
+  function structuredItems(root: ParentNode | null): string[] | undefined {
     if (!root) return undefined;
     const itemElements = Array.from(
       root.querySelectorAll(
@@ -387,7 +406,9 @@ export async function extractJobDraft(detection: {
     const rawItems =
       itemElements.length > 0
         ? itemElements.map((item) => textOf(item))
-        : (textOf(root)
+        : (root.textContent
+            ?.replace(/\s+/g, ' ')
+            .trim()
             ?.replace(/^skills?\s*:?\s*/i, '')
             .split(/[,;\n|]/) ?? []);
     const items = Array.from(
@@ -404,15 +425,40 @@ export async function extractJobDraft(detection: {
   function sectionByHeading(
     label: RegExp,
     root: ParentNode = document,
-  ): Element | null {
-    const heading = Array.from(
+  ): ParentNode | null {
+    const headings = Array.from(
       root.querySelectorAll('h2, h3, h4, [role="heading"]'),
-    ).find((candidate) => label.test(textOf(candidate) ?? ''));
-    return (
-      heading?.closest('section, article, [data-testid], [data-cy]') ??
-      heading?.parentElement ??
-      null
     );
+    const heading = headings.find((candidate) =>
+      label.test(textOf(candidate) ?? ''),
+    );
+    if (!heading) return null;
+
+    const boundary = root instanceof Element ? root : document.body;
+    const container = heading.closest(
+      'section, article, [data-testid], [data-cy]',
+    );
+    // Only trust the closest() match if it's actually scoped inside the
+    // caller's root -- otherwise it can climb past the intended subsection
+    // to a page-level wrapper (e.g. one carrying its own data-testid) and
+    // sweep in unrelated content when callers later query its list items.
+    if (container && container !== boundary && boundary.contains(container)) {
+      return container;
+    }
+
+    const range = document.createRange();
+    range.selectNodeContents(root);
+    range.setStartAfter(heading);
+    const startLevel = headingLevel(heading) ?? 2;
+    const stopHeading = headings
+      .slice(headings.indexOf(heading) + 1)
+      .find(
+        (candidate) => (headingLevel(candidate) ?? startLevel) <= startLevel,
+      );
+    if (stopHeading) range.setEndBefore(stopHeading);
+
+    const section = range.cloneContents();
+    return section.textContent?.trim() ? section : null;
   }
 
   function extractLocationText(jobLocation: unknown): string | undefined {
@@ -442,7 +488,10 @@ export async function extractJobDraft(detection: {
       return location ? [location] : [];
     });
     const unique = Array.from(new Set(locations));
-    return unique.length > 0 ? unique.join(' | ') : undefined;
+    const MAX_JOINED_LOCATIONS = 5;
+    return unique.length > 0
+      ? unique.slice(0, MAX_JOINED_LOCATIONS).join(' | ')
+      : undefined;
   }
 
   function detectRemoteFromJsonLd(
@@ -1505,7 +1554,12 @@ export async function extractJobDraft(detection: {
 
   function headingLevel(el: Element): number | undefined {
     const match = /^H([1-6])$/.exec(el.tagName);
-    return match?.[1] ? Number(match[1]) : undefined;
+    if (match?.[1]) return Number(match[1]);
+
+    const ariaLevel = Number(el.getAttribute('aria-level'));
+    return Number.isInteger(ariaLevel) && ariaLevel >= 1 && ariaLevel <= 6
+      ? ariaLevel
+      : undefined;
   }
 
   function isLinkedinCompanyInsightsUpsellLink(href: string | null): boolean {
@@ -1956,17 +2010,21 @@ export async function extractJobDraft(detection: {
   const canonicalUrl = document
     .querySelector<HTMLLinkElement>('link[rel="canonical"]')
     ?.href?.trim();
+  const resolvedCanonicalUrl = canonicalUrl
+    ? resolveUrl(canonicalUrl)
+    : undefined;
+  const resolvedMetaUrl = metaUrl ? resolveUrl(metaUrl) : undefined;
   addCandidate(
     'job_link',
-    canonicalUrl ? resolveUrl(canonicalUrl) : undefined,
+    resolvedCanonicalUrl,
     'meta',
-    'high',
+    resolvedCanonicalUrl ? metadataUrlConfidence(resolvedCanonicalUrl) : 'low',
   );
   addCandidate(
     'job_link',
-    metaUrl ? resolveUrl(metaUrl) : undefined,
+    resolvedMetaUrl,
     'meta',
-    'medium',
+    resolvedMetaUrl ? metadataUrlConfidence(resolvedMetaUrl) : 'low',
   );
 
   // --- url source ----------------------------------------------------------
@@ -2003,10 +2061,24 @@ export async function extractJobDraft(detection: {
     workday: extractWorkdayDom,
     dice: extractDiceDom,
     angellist: extractWellfoundDom,
-    direct: extractBuiltInDom,
     google: extractGoogleJobsDom,
   };
-  await platformDomExtractors[detection.platform]?.();
+  // 'direct' is the API's catch-all bucket for every unrecognized careers
+  // page, not just BuiltIn -- so it can't be wired to a single extractor the
+  // way the enum-specific platforms above are. Each entry here self-guards
+  // on hostname (see extractBuiltInDom) and a future direct-bucket site gets
+  // its own entry instead of another hostname branch bolted onto an
+  // unrelated site's extractor.
+  const directDomExtractors: (() => void | Promise<void>)[] = [
+    extractBuiltInDom,
+  ];
+  if (detection.platform === 'direct') {
+    for (const extractor of directDomExtractors) {
+      await extractor();
+    }
+  } else {
+    await platformDomExtractors[detection.platform]?.();
+  }
 
   // --- visible-text source -------------------------------------------------
   const h1Text = document
