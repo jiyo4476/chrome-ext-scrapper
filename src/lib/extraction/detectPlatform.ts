@@ -57,6 +57,9 @@ export function isAutoScrapeUrl(url: string): boolean {
   if (parsed.protocol !== 'https:') return false;
 
   const host = parsed.hostname.toLowerCase();
+  // Normalize trailing slashes once for every provider: valid detail routes
+  // remain accepted, while empty `/jobs/` listing routes collapse to `/jobs`
+  // and cannot satisfy checks that require content after the jobs segment.
   const path = parsed.pathname.toLowerCase().replace(/\/+$/, '') || '/';
 
   if (!AUTO_SCRAPE_DOMAINS.some((domain) => hostMatches(host, domain))) {
