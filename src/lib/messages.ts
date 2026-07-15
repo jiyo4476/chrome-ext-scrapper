@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { popupDraftContextSchema, popupFormValuesSchema } from './popupDraft';
+import { popupDraftContextSchema } from './popupDraft';
+import { popupFormValuesSchema } from './popupForm';
 import { publicSettingsSchema, publicSettingsUpdateSchema } from './settings';
 import { jobDraftSchema, scrapePayloadSchema } from './schemas';
 

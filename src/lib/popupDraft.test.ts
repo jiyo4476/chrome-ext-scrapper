@@ -59,6 +59,19 @@ describe('popup draft storage', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('does not restore the single-slot draft after another tab overwrites it', async () => {
+    const otherContext = { ...context, tabId: context.tabId + 1 };
+    const otherValues = { ...emptyFormValues(), company_name: 'Other tab' };
+
+    await savePopupDraft(otherContext, otherValues);
+    browserMock.storage.local.get.mockResolvedValue(
+      browserMock.storage.local.set.mock.calls[0]?.[0],
+    );
+
+    await expect(getPopupDraft(context)).resolves.toBeUndefined();
+    await expect(getPopupDraft(otherContext)).resolves.toEqual(otherValues);
+  });
+
   it('ignores malformed storage instead of breaking popup initialization', async () => {
     browserMock.storage.local.get.mockResolvedValue({
       'jobTracker.popupDraft': { ...context, values: { job_title: 123 } },

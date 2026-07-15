@@ -1,31 +1,6 @@
 import { browser } from 'wxt/browser';
 import { z } from 'zod';
-import type { PopupFormValues } from './popupForm';
-
-export const popupFormValuesSchema: z.ZodType<PopupFormValues> = z.object({
-  job_title: z.string(),
-  company_name: z.string(),
-  job_link: z.string(),
-  source_platform: z.string(),
-  job_location: z.string(),
-  is_remote: z.boolean(),
-  job_description: z.string(),
-  external_job_id: z.string(),
-  date_posted: z.string(),
-  job_type: z.string(),
-  experience_level: z.string(),
-  security_clearance_req: z.boolean(),
-  salary_type: z.string(),
-  salary_min: z.string(),
-  salary_max: z.string(),
-  hourly_rate_min: z.string(),
-  hourly_rate_max: z.string(),
-  salary_text: z.string(),
-  skills: z.string(),
-  software: z.string(),
-  keywords: z.string(),
-  certifications: z.string(),
-});
+import { type PopupFormValues, popupFormValuesSchema } from './popupForm';
 
 export const popupDraftContextSchema = z.object({
   tabId: z.number().int().nonnegative(),
@@ -49,6 +24,10 @@ interface PopupDraft {
   updatedAt: number;
 }
 
+// This feature intentionally uses one slot: opening the popup for another tab
+// replaces the prior tab's draft, while context matching prevents cross-tab
+// restoration. Move to a tab-keyed record if multi-tab draft retention becomes
+// a product requirement.
 const STORAGE_KEY = 'jobTracker.popupDraft';
 
 export async function getPopupDraft(
