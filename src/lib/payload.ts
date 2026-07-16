@@ -12,7 +12,7 @@ export function buildScrapePayload(draft: JobDraft): ScrapePayload {
     job_title: cleanString(draft.job_title),
     job_link: cleanString(draft.job_link),
     job_location: cleanString(draft.job_location),
-    job_description: cleanString(draft.job_description),
+    job_description: cleanMultilineString(draft.job_description),
     salary_text: cleanString(draft.salary_text),
     skills: cleanStringArray(draft.skills),
     software: cleanStringArray(draft.software),
@@ -26,6 +26,11 @@ export function buildScrapePayload(draft: JobDraft): ScrapePayload {
 
 function cleanString(value: string | undefined): string | undefined {
   const trimmed = value?.replace(/\s+/g, ' ').trim();
+  return trimmed || undefined;
+}
+
+function cleanMultilineString(value: string | undefined): string | undefined {
+  const trimmed = value?.replace(/\r\n?/g, '\n').trim();
   return trimmed || undefined;
 }
 

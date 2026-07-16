@@ -10,7 +10,8 @@ describe('buildScrapePayload', () => {
         company_name: ' Acme ',
         job_title: ' Senior   Software Engineer ',
         job_link: 'https://example.com/jobs/abc123',
-        job_description: ' Build   tools. ',
+        job_description:
+          '  # Build tools\r\n\r\nKeep  meaningful spacing.\r\n\r\n- First\r\n- Second  ',
         skills: [' TypeScript ', '', 'Chrome Extensions'],
         extraction_confidence: {
           job_title: 'high',
@@ -22,9 +23,29 @@ describe('buildScrapePayload', () => {
       company_name: 'Acme',
       job_title: 'Senior Software Engineer',
       job_link: 'https://example.com/jobs/abc123',
-      job_description: 'Build tools.',
+      job_description:
+        '# Build tools\n\nKeep  meaningful spacing.\n\n- First\n- Second',
       skills: ['TypeScript', 'Chrome Extensions'],
     });
+  });
+
+  it('preserves Markdown structure while scalar fields remain normalized', () => {
+    const payload = buildScrapePayload({
+      source_platform: 'linkedin',
+      external_job_id: ' job   1 ',
+      company_name: ' Acme   Corp ',
+      job_title: ' Senior   Engineer ',
+      job_link: 'https://example.com/jobs/1',
+      job_description:
+        '**Overview**  \nNext line\n\n## Requirements\n\n- TypeScript',
+    });
+
+    expect(payload.external_job_id).toBe('job 1');
+    expect(payload.company_name).toBe('Acme Corp');
+    expect(payload.job_title).toBe('Senior Engineer');
+    expect(payload.job_description).toBe(
+      '**Overview**  \nNext line\n\n## Requirements\n\n- TypeScript',
+    );
   });
 
   it('omits posting_md_path because the extension cannot create server files', () => {
