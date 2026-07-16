@@ -11,7 +11,7 @@ describe('buildScrapePayload', () => {
         job_title: ' Senior   Software Engineer ',
         job_link: 'https://example.com/jobs/abc123',
         job_description:
-          '  # Build tools\r\n\r\nKeep  meaningful spacing.\r\n\r\n- First\r\n- Second  ',
+          '\r\n# Build tools\r\n\r\nKeep  meaningful spacing.\r\n\r\n- First\r\n- Second\r\n',
         skills: [' TypeScript ', '', 'Chrome Extensions'],
         extraction_confidence: {
           job_title: 'high',
@@ -46,6 +46,33 @@ describe('buildScrapePayload', () => {
     expect(payload.job_description).toBe(
       '**Overview**  \nNext line\n\n## Requirements\n\n- TypeScript',
     );
+  });
+
+  it('removes blank outer lines without trimming meaningful line spacing', () => {
+    const payload = buildScrapePayload({
+      source_platform: 'direct',
+      external_job_id: 'job-2',
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      job_link: 'https://example.com/jobs/2',
+      job_description:
+        '\r\n  \r\n    npm run build\r\nContinue here  \r\n\t\r\n',
+    });
+
+    expect(payload.job_description).toBe('    npm run build\nContinue here  ');
+  });
+
+  it('omits a whitespace-only Markdown description', () => {
+    const payload = buildScrapePayload({
+      source_platform: 'direct',
+      external_job_id: 'job-3',
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      job_link: 'https://example.com/jobs/3',
+      job_description: ' \r\n\t\r\n ',
+    });
+
+    expect(payload).not.toHaveProperty('job_description');
   });
 
   it('omits posting_md_path because the extension cannot create server files', () => {

@@ -30,8 +30,17 @@ function cleanString(value: string | undefined): string | undefined {
 }
 
 function cleanMultilineString(value: string | undefined): string | undefined {
-  const trimmed = value?.replace(/\r\n?/g, '\n').trim();
-  return trimmed || undefined;
+  if (value === undefined) return undefined;
+
+  const lines = value.replace(/\r\n?/g, '\n').split('\n');
+  let start = 0;
+  let end = lines.length;
+
+  while (start < end && lines[start]?.trim() === '') start += 1;
+  while (end > start && lines[end - 1]?.trim() === '') end -= 1;
+
+  const cleaned = lines.slice(start, end).join('\n');
+  return cleaned || undefined;
 }
 
 function cleanStringArray(values: string[] | undefined): string[] | undefined {
