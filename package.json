@@ -13,6 +13,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
+    "sync:catalog": "node scripts/sync-taxonomy-catalog.mjs && prettier --write src/lib/extraction/taxonomyCatalog.ts",
     "quality": "npm run format:check && npm run lint && npm run compile && npm run test && npm run build",
     "postinstall": "wxt prepare"
   },

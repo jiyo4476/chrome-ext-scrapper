@@ -106,6 +106,45 @@ describe('buildJobPostingJsonLd', () => {
     expect(serialized).not.toContain('oauthrefreshtoken');
     expect(serialized).not.toContain('apikey');
   });
+
+  it('maps skills to JobPosting skills and certifications to qualifications', () => {
+    const result = buildJobPostingJsonLd({
+      ...baseDraft,
+      skills: ['Python', 'CI/CD'],
+      certifications: ['CISSP', 'PMP'],
+    });
+
+    expect(result.skills).toEqual(['Python', 'CI/CD']);
+    expect(result.qualifications).toEqual([
+      { '@type': 'EducationalOccupationalCredential', name: 'CISSP' },
+      { '@type': 'EducationalOccupationalCredential', name: 'PMP' },
+    ]);
+  });
+
+  it('omits software and keywords instead of collapsing them into skills', () => {
+    const result = buildJobPostingJsonLd({
+      ...baseDraft,
+      skills: ['Python'],
+      software: ['Docker', 'PostgreSQL'],
+      keywords: ['remote', 'startup'],
+      certifications: ['CISSP'],
+    });
+
+    // Reviewed policy: JobPosting has no property for named tools or
+    // contextual labels, and serializing them under `skills` would collapse
+    // the four-taxonomy split -- so they are explicitly omitted.
+    expect(result.skills).toEqual(['Python']);
+    expect(result).not.toHaveProperty('keywords');
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain('Docker');
+    expect(serialized).not.toContain('startup');
+  });
+
+  it('omits skills and qualifications entirely when the categories are empty', () => {
+    const result = buildJobPostingJsonLd({ ...baseDraft, skills: [] });
+    expect(result).not.toHaveProperty('skills');
+    expect(result).not.toHaveProperty('qualifications');
+  });
 });
 
 describe('buildExportFilename', () => {

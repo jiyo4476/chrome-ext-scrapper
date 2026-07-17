@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyCandidateSelection,
+  applyExtractionPreservingTaxonomy,
   CANDIDATE_SOURCE_LABELS,
   draftToFormValues,
   emptyFormValues,
@@ -157,6 +158,70 @@ describe('validateFormValues', () => {
   it('allows an empty job_link and empty numeric fields (nothing to validate)', () => {
     expect(validateFormValues(emptyFormValues())).toEqual([]);
   });
+
+  it('flags a duplicate within one taxonomy category only', () => {
+    const errors = validateFormValues({
+      ...emptyFormValues(),
+      skills: 'Python, python',
+      keywords: 'python',
+    });
+
+    expect(errors.map((e) => e.field)).toEqual(['skills']);
+  });
+
+  it('accepts the same value in two different taxonomy categories', () => {
+    const errors = validateFormValues({
+      ...emptyFormValues(),
+      skills: 'Microservices',
+      keywords: 'microservices',
+    });
+
+    expect(errors).toEqual([]);
+  });
+});
+
+describe('applyExtractionPreservingTaxonomy', () => {
+  it('overwrites scalar fields but merges each taxonomy category', () => {
+    const current: PopupFormValues = {
+      ...emptyFormValues(),
+      job_title: 'My Edited Title',
+      skills: 'My Custom Skill, Python',
+      software: 'Docker',
+      certifications: 'CISSP',
+      keywords: 'remote',
+    };
+
+    const next = applyExtractionPreservingTaxonomy(current, {
+      source_platform: 'linkedin',
+      job_title: 'Extracted Title',
+      skills: ['python', 'CI/CD'],
+      software: ['PostgreSQL'],
+      keywords: ['startup'],
+    });
+
+    expect(next.job_title).toBe('Extracted Title');
+    expect(next.skills).toBe('My Custom Skill, Python, CI/CD');
+    expect(next.software).toBe('Docker, PostgreSQL');
+    expect(next.certifications).toBe('CISSP');
+    expect(next.keywords).toBe('remote, startup');
+  });
+
+  it('never moves a value between categories, even for identical names', () => {
+    const current: PopupFormValues = {
+      ...emptyFormValues(),
+      skills: 'Microservices',
+    };
+
+    const next = applyExtractionPreservingTaxonomy(current, {
+      source_platform: 'other',
+      keywords: ['microservices'],
+    });
+
+    // The skill stays a skill; the keyword joins keywords. Same-name values
+    // may exist in both categories at once.
+    expect(next.skills).toBe('Microservices');
+    expect(next.keywords).toBe('microservices');
+  });
 });
 
 describe('firstInvalidField', () => {
@@ -171,6 +236,14 @@ describe('firstInvalidField', () => {
     ]);
     expect(result).toBe('job_link');
   });
+
+  it('orders certifications before keywords, matching the popup DOM layout', () => {
+    const result = firstInvalidField([
+      { field: 'keywords', message: 'bad' },
+      { field: 'certifications', message: 'bad' },
+    ]);
+    expect(result).toBe('certifications');
+  });
 });
 
 describe('candidate review mode', () => {
@@ -179,6 +252,7 @@ describe('candidate review mode', () => {
     expect(CANDIDATE_SOURCE_LABELS.meta).toBe('From meta tags');
     expect(CANDIDATE_SOURCE_LABELS['visible-text']).toBe('From page text');
     expect(CANDIDATE_SOURCE_LABELS.url).toBe('From URL');
+    expect(CANDIDATE_SOURCE_LABELS.description).toBe('From description scan');
   });
 
   it('formats array, boolean, and scalar candidate values as strings', () => {

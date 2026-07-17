@@ -7,6 +7,7 @@ import {
   type JobDraft,
 } from '../schemas';
 import { extractTaxonomy } from './taxonomyExtractor';
+import { mergeTaxonomyTags } from '../taxonomyFields';
 
 // '#text' must be listed explicitly alongside KEEP_CONTENT: false below --
 // without it, DOMPurify treats bare text nodes as unlisted too and strips
@@ -236,13 +237,19 @@ export async function extractJobDraft(detection: {
       keyof JobDraft,
       {
         value: unknown;
-        source: 'jsonld' | 'dom' | 'meta' | 'visible-text' | 'url';
+        source:
+          'jsonld' | 'dom' | 'meta' | 'visible-text' | 'url' | 'description';
         confidence: 'high' | 'medium' | 'low';
       }[]
     >
   >;
 }> {
-  type Source = 'jsonld' | 'dom' | 'meta' | 'visible-text' | 'url';
+  // 'description' marks values derived by scanning the selected, sanitized
+  // job description against the canonical taxonomy catalog -- it never wins
+  // field selection (taxonomy merge happens after ranking) but lets the
+  // popup's field review identify where an array candidate came from.
+  type Source =
+    'jsonld' | 'dom' | 'meta' | 'visible-text' | 'url' | 'description';
   type Confidence = 'high' | 'medium' | 'low';
 
   interface Candidate {
@@ -1585,8 +1592,9 @@ export async function extractJobDraft(detection: {
       }
     | undefined {
     const hasUsdMarker = (text: string): boolean =>
-      !/\b(?!US(?:D)?\b)[A-Z]{1,3}\s*\$/.test(text) &&
-      /(?:\bUSD\b|\bUS\$|(?<![A-Za-z])\$)/i.test(text);
+      !/\b(?!US(?:D)?\b|TO\b|UP\b|IS\b|AT\b|OF\b|A\b)[A-Z]{1,3}\s*\$/i.test(
+        text,
+      ) && /(?:\bUSD\b|\bUS\$|(?<![A-Za-z])\$)/i.test(text);
     const isUnitlessAnnualUpperBound = (text: string): boolean =>
       /^\s*(?:(?:base\s+)?(?:salary|pay|compensation)\s*)?up\s+to\s+(?:USD\s*\$?|US\$|(?<![A-Za-z])\$)\s*[\d,.]+\s*k\s*$/i.test(
         text,
@@ -2337,6 +2345,9 @@ export async function extractJobDraft(detection: {
     meta: 2,
     url: 3,
     'visible-text': 4,
+    // Description-derived taxonomy values are appended after ranking (see the
+    // taxonomy merge below); the rank only exists so the table is exhaustive.
+    description: 5,
   };
   const confidenceRank: Record<Confidence, number> = {
     high: 0,
@@ -2378,8 +2389,15 @@ export async function extractJobDraft(detection: {
 
   // Taxonomy extraction deliberately runs after candidate resolution so it
   // scans only the selected, sanitized description instead of page-wide text
-  // or an adjacent/stale provider candidate. Provider-supplied values remain
-  // first and description-derived canonical matches are appended.
+  // or an adjacent/stale provider candidate.
+  //
+  // Documented precedence per category (skills, software, certifications,
+  // keywords): structured provider values (e.g. Dice's skills section,
+  // Lever's department) come first, then description-derived canonical
+  // matches are appended; duplicates are dropped case-insensitively *within*
+  // the category only, and each category is capped at MAX_TAGS_PER_FIELD.
+  // Values are never moved or deduplicated across categories -- ownership is
+  // decided by the catalog, not by which category matched first.
   const selectedDescription = draft.job_description;
   if (
     typeof selectedDescription === 'string' &&
@@ -2387,26 +2405,38 @@ export async function extractJobDraft(detection: {
     selectedSources.job_description !== 'visible-text'
   ) {
     const extracted = extractTaxonomy(selectedDescription);
-    const taxonomyFields = ['skills', 'software', 'certifications'] as const;
+    const taxonomyFields = [
+      'skills',
+      'software',
+      'certifications',
+      'keywords',
+    ] as const;
 
     for (const field of taxonomyFields) {
       const provided = Array.isArray(draft[field])
         ? (draft[field] as string[])
         : [];
-      const merged: string[] = [];
-      const seen = new Set<string>();
-
-      for (const value of [...provided, ...extracted[field]]) {
-        const key = value.toLocaleLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        merged.push(value);
-        if (merged.length === MAX_TAGS_PER_FIELD) break;
-      }
+      const merged = mergeTaxonomyTags(provided, extracted[field]);
 
       if (merged.length > 0) {
         draft[field] = merged;
         confidenceMap[field] ??= 'low';
+
+        // When a structured provider value was merged with description
+        // matches, expose both variants in the field review so the user can
+        // see each candidate's source and fall back to the provider-only
+        // list if the description scan added noise.
+        const providerCandidates = fieldCandidates[field] ?? [];
+        if (
+          provided.length > 0 &&
+          merged.length > provided.length &&
+          providerCandidates.length > 0
+        ) {
+          outCandidates[field] = [
+            ...providerCandidates,
+            { value: merged, source: 'description', confidence: 'low' },
+          ];
+        }
       }
     }
   }

@@ -1,218 +1,41 @@
-interface TaxonomyEntry {
-  canonical: string;
-  aliases?: readonly string[];
-}
+import {
+  CERTIFICATIONS,
+  KEYWORDS,
+  SKILLS,
+  SOFTWARE,
+  type TaxonomyEntry,
+} from './taxonomyCatalog';
 
 interface CompiledTaxonomyEntry {
   canonical: string;
   patterns: RegExp[];
 }
 
+/**
+ * Category-owned extraction result. Every value stays in the category that
+ * owns it: a credential is never emitted as software, a tool is never
+ * emitted as a skill, and keywords are contextual labels that may
+ * intentionally repeat a term from another category (e.g. "microservices").
+ */
 export interface ExtractedTaxonomy {
   skills: string[];
   software: string[];
   certifications: string[];
+  keywords: string[];
 }
+
+export const TAXONOMY_CATEGORIES = [
+  'skills',
+  'software',
+  'certifications',
+  'keywords',
+] as const;
+
+export type TaxonomyCategory = (typeof TAXONOMY_CATEGORIES)[number];
 
 // Keep this aligned with MAX_TAGS_PER_FIELD in schemas.ts. Importing the
 // runtime schema here would pull Zod into the injected content-script bundle.
 export const MAX_EXTRACTED_TAGS = 100;
-
-const SKILLS: readonly TaxonomyEntry[] = [
-  { canonical: 'TypeScript' },
-  { canonical: 'JavaScript' },
-  { canonical: 'Python' },
-  { canonical: 'Kotlin' },
-  { canonical: 'Swift' },
-  { canonical: 'Scala' },
-  { canonical: 'Haskell' },
-  { canonical: 'Clojure' },
-  { canonical: 'Elixir' },
-  { canonical: 'Erlang' },
-  { canonical: 'PowerShell' },
-  { canonical: 'Ruby' },
-  { canonical: 'Rust' },
-  { canonical: 'Java' },
-  { canonical: 'PHP' },
-  { canonical: 'C#' },
-  { canonical: 'C++' },
-  { canonical: 'Bash / Shell Scripting', aliases: ['Bash', 'Shell Scripting'] },
-  { canonical: 'Accessibility (WCAG)', aliases: ['WCAG'] },
-  { canonical: 'Progressive Web Apps', aliases: ['PWA'] },
-  { canonical: 'Service Workers' },
-  { canonical: 'WebSockets' },
-  { canonical: 'WebRTC' },
-  {
-    canonical: 'OAuth 2.0 / OpenID Connect',
-    aliases: ['OAuth 2.0', 'OpenID Connect', 'OAuth'],
-  },
-  { canonical: 'REST API Design', aliases: ['REST API'] },
-  { canonical: 'GraphQL' },
-  { canonical: 'gRPC' },
-  { canonical: 'JWT' },
-  { canonical: 'Database Design' },
-  { canonical: 'Data Modeling' },
-  { canonical: 'Query Optimization' },
-  { canonical: 'SQL' },
-  { canonical: 'Infrastructure as Code', aliases: ['IaC'] },
-  { canonical: 'Site Reliability Engineering', aliases: ['SRE'] },
-  { canonical: 'CI/CD' },
-  { canonical: 'Natural Language Processing', aliases: ['NLP'] },
-  { canonical: 'Machine Learning', aliases: ['ML'] },
-  { canonical: 'Deep Learning' },
-  { canonical: 'Computer Vision' },
-  { canonical: 'Data Warehousing' },
-  { canonical: 'ETL Pipelines', aliases: ['ETL'] },
-  { canonical: 'iOS Development', aliases: ['iOS Development'] },
-  { canonical: 'Android Development' },
-  { canonical: 'Test-Driven Development', aliases: ['TDD'] },
-  { canonical: 'End-to-End Testing', aliases: ['E2E Testing'] },
-  { canonical: 'Integration Testing' },
-  { canonical: 'Unit Testing' },
-  { canonical: 'Zero Trust Architecture', aliases: ['Zero Trust'] },
-  { canonical: 'Application Security', aliases: ['AppSec'] },
-  { canonical: 'Penetration Testing', aliases: ['Pen Testing'] },
-  { canonical: 'SOC 2 Compliance', aliases: ['SOC 2'] },
-  { canonical: 'OWASP Top 10', aliases: ['OWASP'] },
-  { canonical: 'Encryption' },
-  { canonical: 'Networking (TCP/IP)', aliases: ['TCP/IP'] },
-  { canonical: 'Embedded Systems' },
-  { canonical: 'Distributed Systems' },
-  { canonical: 'Microservices' },
-  { canonical: 'System Design' },
-  { canonical: 'Event-Driven Architecture', aliases: ['Event-Driven'] },
-  { canonical: 'Domain-Driven Design', aliases: ['DDD'] },
-  { canonical: 'CQRS / Event Sourcing', aliases: ['CQRS'] },
-  { canonical: 'High Availability Design', aliases: ['High Availability'] },
-  { canonical: 'Design Patterns' },
-  { canonical: 'Agile / Scrum', aliases: ['Agile', 'Scrum'] },
-  { canonical: 'Project Management' },
-  { canonical: 'Incident Response' },
-  { canonical: 'Technical Writing' },
-  { canonical: 'Mentoring' },
-  { canonical: 'Debugging' },
-];
-
-const SOFTWARE: readonly TaxonomyEntry[] = [
-  { canonical: 'React' },
-  { canonical: 'React Native' },
-  { canonical: 'Next.js' },
-  { canonical: 'Vue.js', aliases: ['Vue'] },
-  { canonical: 'Angular' },
-  { canonical: 'Svelte' },
-  { canonical: 'SvelteKit' },
-  { canonical: 'Nuxt.js' },
-  { canonical: 'Remix' },
-  { canonical: 'Redux' },
-  { canonical: 'Zustand' },
-  { canonical: 'TanStack Query' },
-  { canonical: 'TanStack Table' },
-  { canonical: 'Tailwind CSS', aliases: ['Tailwind'] },
-  { canonical: 'Sass / SCSS', aliases: ['Sass', 'SCSS'] },
-  { canonical: 'Webpack' },
-  { canonical: 'Rollup' },
-  { canonical: 'Vite' },
-  { canonical: 'Node.js' },
-  { canonical: 'ASP.NET Core', aliases: ['ASP.NET'] },
-  { canonical: 'Spring Boot', aliases: ['Spring'] },
-  { canonical: 'Ruby on Rails', aliases: ['Rails'] },
-  { canonical: 'Express.js', aliases: ['Express'] },
-  { canonical: 'Fastify' },
-  { canonical: 'NestJS' },
-  { canonical: 'Django' },
-  { canonical: 'Flask' },
-  { canonical: 'FastAPI' },
-  { canonical: 'Laravel' },
-  { canonical: 'Prisma' },
-  { canonical: 'PostgreSQL', aliases: ['Postgres'] },
-  { canonical: 'MySQL' },
-  { canonical: 'SQLite' },
-  { canonical: 'DynamoDB' },
-  { canonical: 'Cassandra' },
-  { canonical: 'MongoDB' },
-  { canonical: 'Redis' },
-  { canonical: 'Elasticsearch' },
-  { canonical: 'Git' },
-  { canonical: 'GitHub' },
-  { canonical: 'GitLab' },
-  { canonical: 'Bitbucket' },
-  { canonical: 'GitHub Actions' },
-  { canonical: 'GitLab CI/CD', aliases: ['GitLab CI'] },
-  { canonical: 'Docker' },
-  { canonical: 'Kubernetes', aliases: ['k8s'] },
-  { canonical: 'Helm' },
-  { canonical: 'Terraform' },
-  { canonical: 'Ansible' },
-  { canonical: 'Jenkins' },
-  { canonical: 'AWS' },
-  { canonical: 'Azure' },
-  { canonical: 'GCP', aliases: ['Google Cloud Platform'] },
-  { canonical: 'Cloudflare' },
-  { canonical: 'Linux' },
-  { canonical: 'OpenTelemetry' },
-  { canonical: 'Prometheus' },
-  { canonical: 'Grafana' },
-  { canonical: 'Datadog' },
-  { canonical: 'Splunk' },
-  { canonical: 'LangChain' },
-  { canonical: 'OpenAI API', aliases: ['OpenAI'] },
-  { canonical: 'scikit-learn', aliases: ['sklearn'] },
-  { canonical: 'PyTorch' },
-  { canonical: 'TensorFlow' },
-  { canonical: 'Pandas' },
-  { canonical: 'NumPy' },
-  { canonical: 'Jupyter' },
-  { canonical: 'BigQuery' },
-  { canonical: 'Snowflake' },
-  { canonical: 'Airflow' },
-  { canonical: 'Spark' },
-  { canonical: 'Kafka' },
-  { canonical: 'dbt' },
-  { canonical: 'Jetpack Compose' },
-  { canonical: 'SwiftUI' },
-  { canonical: 'Flutter' },
-  { canonical: 'Playwright' },
-  { canonical: 'Cypress' },
-  { canonical: 'Selenium' },
-  { canonical: 'Vitest' },
-  { canonical: 'Jest' },
-  { canonical: 'PyTest' },
-  { canonical: 'JUnit' },
-  { canonical: 'Protocol Buffers', aliases: ['Protobuf'] },
-  { canonical: 'Jira' },
-  { canonical: 'Confluence' },
-  { canonical: 'Slack' },
-  { canonical: 'VS Code', aliases: ['Visual Studio Code'] },
-  { canonical: 'IntelliJ' },
-  { canonical: 'Figma' },
-  { canonical: 'Notion' },
-  { canonical: 'Tableau' },
-];
-
-const CERTIFICATIONS: readonly TaxonomyEntry[] = [
-  {
-    canonical: 'CompTIA Security+',
-    aliases: ['Security+', 'CompTIA Security Plus'],
-  },
-  {
-    canonical: 'CompTIA Network+',
-    aliases: ['Network+', 'CompTIA Network Plus'],
-  },
-  { canonical: 'CompTIA A+', aliases: ['A+', 'CompTIA A Plus'] },
-  { canonical: 'CISSP' },
-  { canonical: 'PMP' },
-  { canonical: 'CPA' },
-  {
-    canonical: 'AWS Certified Solutions Architect',
-    aliases: ['AWS Solutions Architect'],
-  },
-  { canonical: 'AWS Certified Developer' },
-  { canonical: 'AWS Certified DevOps Engineer' },
-  { canonical: 'Azure Certified' },
-  { canonical: 'GCP Certified', aliases: ['Google Cloud Certified'] },
-  { canonical: 'Kubernetes Administrator', aliases: ['CKA'] },
-  { canonical: 'Terraform Associate' },
-];
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -233,6 +56,11 @@ function compileTaxonomy(
   }));
 }
 
+// Structured taxonomies (skills, software, certifications) must not share a
+// term: each canonical name or alias has exactly one owning category, so a
+// detected mention can never be filed under two structured categories.
+// KEYWORDS are deliberately excluded from this check -- they are contextual
+// labels, and overlapping a skill (e.g. 'microservices') is intended.
 function assertExclusiveOwnership(
   taxonomies: readonly (readonly TaxonomyEntry[])[],
 ): void {
@@ -256,6 +84,9 @@ assertExclusiveOwnership([SKILLS, SOFTWARE, CERTIFICATIONS]);
 const COMPILED_SKILLS = compileTaxonomy(SKILLS);
 const COMPILED_SOFTWARE = compileTaxonomy(SOFTWARE);
 const COMPILED_CERTIFICATIONS = compileTaxonomy(CERTIFICATIONS);
+const COMPILED_KEYWORDS = compileTaxonomy(
+  KEYWORDS.map((keyword) => ({ canonical: keyword })),
+);
 
 function matchTaxonomy(
   description: string,
@@ -286,13 +117,25 @@ function maskTaxonomyMentions(
   );
 }
 
+// Mirrors the backend's suppressGenericCertifications(): drop an umbrella
+// credential (e.g. 'AWS Certified', 'CompTIA') when a more specific
+// certification from the same family also matched.
+function suppressGenericCertifications(matched: string[]): string[] {
+  return matched.filter(
+    (name) =>
+      !matched.some((other) => other !== name && other.startsWith(`${name} `)),
+  );
+}
+
 export function extractTaxonomy(description: string): ExtractedTaxonomy {
-  const certifications = matchTaxonomy(description, COMPILED_CERTIFICATIONS);
+  const certifications = suppressGenericCertifications(
+    matchTaxonomy(description, COMPILED_CERTIFICATIONS),
+  );
   // A credential name can contain a platform name (for example, "AWS
-  // Certified Solutions Architect" or "Kubernetes Administrator"). Mask the
-  // credential phrase before software matching so the credential alone does
-  // not fabricate a second category match. Independent platform mentions
-  // elsewhere in the description still match normally.
+  // Certified Solutions Architect" or "Certified Kubernetes Administrator").
+  // Mask the credential phrase before software matching so the credential
+  // alone does not fabricate a second category match. Independent platform
+  // mentions elsewhere in the description still match normally.
   const descriptionWithoutCertifications = maskTaxonomyMentions(
     description,
     COMPILED_CERTIFICATIONS,
@@ -305,5 +148,6 @@ export function extractTaxonomy(description: string): ExtractedTaxonomy {
       COMPILED_SOFTWARE,
     ),
     certifications,
+    keywords: matchTaxonomy(description, COMPILED_KEYWORDS),
   };
 }
