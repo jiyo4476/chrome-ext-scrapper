@@ -1,4 +1,5 @@
 import {
+  MAX_TAGS_PER_FIELD,
   type JobDraft,
   type ScrapePayload,
   scrapePayloadSchema,
@@ -14,10 +15,10 @@ export function buildScrapePayload(draft: JobDraft): ScrapePayload {
     job_location: cleanString(draft.job_location),
     job_description: cleanString(draft.job_description),
     salary_text: cleanString(draft.salary_text),
-    skills: cleanStringArray(draft.skills),
-    software: cleanStringArray(draft.software),
-    keywords: cleanStringArray(draft.keywords),
-    certifications: cleanStringArray(draft.certifications),
+    skills: cleanTagArray(draft.skills),
+    software: cleanTagArray(draft.software),
+    keywords: cleanTagArray(draft.keywords),
+    certifications: cleanTagArray(draft.certifications),
     extraction_confidence: undefined,
   });
 
@@ -29,12 +30,29 @@ function cleanString(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
-function cleanStringArray(values: string[] | undefined): string[] | undefined {
-  const cleaned = values
-    ?.map((value) => cleanString(value))
-    .filter((value): value is string => Boolean(value));
+/**
+ * Normalizes one taxonomy category for the payload: blank entries are
+ * dropped, duplicates are removed case-insensitively (first spelling wins),
+ * the category is capped at {@link MAX_TAGS_PER_FIELD}, and an empty result
+ * is omitted from the payload entirely. Each category cleans independently:
+ * values are never deduplicated against, or moved into, another category.
+ */
+function cleanTagArray(values: string[] | undefined): string[] | undefined {
+  if (!values) return undefined;
 
-  return cleaned?.length ? cleaned : undefined;
+  const cleaned: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const tag = cleanString(value);
+    if (!tag) continue;
+    const key = tag.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cleaned.push(tag);
+    if (cleaned.length === MAX_TAGS_PER_FIELD) break;
+  }
+
+  return cleaned.length ? cleaned : undefined;
 }
 
 function omitEmptyValues(

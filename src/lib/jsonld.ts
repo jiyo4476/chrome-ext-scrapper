@@ -14,6 +14,22 @@ const EMPLOYMENT_TYPE_MAP: Record<NonNullable<JobDraft['job_type']>, string> = {
  * object. This is a pure, explicit allowlist mapper: it never sees or emits
  * OAuth tokens, API keys, settings, cookies, or raw page HTML because
  * `JobDraft` never carries those fields.
+ *
+ * Taxonomy mapping policy (reviewed for EXT-TAXONOMY-001) -- each of the
+ * four categories has an explicit decision; none is ever silently collapsed
+ * into another:
+ *
+ * - `skills`         -> JobPosting `skills` (schema.org Text; emitted as an
+ *                       array of strings).
+ * - `certifications` -> JobPosting `qualifications` as
+ *                       `EducationalOccupationalCredential` objects, the
+ *                       schema.org type for named credentials.
+ * - `software`       -> omitted. JobPosting has no property for named
+ *                       tools/products, and serializing software under
+ *                       `skills` would collapse the taxonomy.
+ * - `keywords`       -> omitted. `keywords` is a CreativeWork property, not
+ *                       a JobPosting property, and these contextual labels
+ *                       are not schema.org skills.
  */
 export function buildJobPostingJsonLd(
   draft: JobDraft,
@@ -37,6 +53,13 @@ export function buildJobPostingJsonLd(
       : undefined,
     jobLocationType: draft.is_remote ? 'TELECOMMUTE' : undefined,
     baseSalary,
+    skills: draft.skills?.length ? [...draft.skills] : undefined,
+    qualifications: draft.certifications?.length
+      ? draft.certifications.map((name) => ({
+          '@type': 'EducationalOccupationalCredential',
+          name,
+        }))
+      : undefined,
     identifier: draft.external_job_id
       ? { '@type': 'PropertyValue', value: draft.external_job_id }
       : undefined,
