@@ -1,5 +1,12 @@
 import { z } from 'zod';
 import { type JobDraft, jobDraftSchema } from './schemas';
+import {
+  joinTagList,
+  mergeTaxonomyTags,
+  parseTagList,
+  TAXONOMY_FIELDS,
+  validateTagList,
+} from './taxonomyFields';
 
 /**
  * Every {@link JobDraft} field the popup form can edit. `extraction_confidence`
@@ -12,12 +19,9 @@ const BOOLEAN_FIELDS = new Set<DraftFormField>([
   'security_clearance_req',
 ]);
 
-const LIST_FIELDS = new Set<DraftFormField>([
-  'skills',
-  'software',
-  'keywords',
-  'certifications',
-]);
+// The four taxonomy categories are independent list fields -- see
+// taxonomyFields.ts for the category copy and per-category tag operations.
+const LIST_FIELDS = new Set<DraftFormField>(TAXONOMY_FIELDS);
 
 const NUMBER_FIELDS = new Set<DraftFormField>([
   'salary_min',
@@ -112,11 +116,35 @@ export function draftToFormValues(draft: Partial<JobDraft>): PopupFormValues {
     hourly_rate_min: numberToFormString(draft.hourly_rate_min),
     hourly_rate_max: numberToFormString(draft.hourly_rate_max),
     salary_text: draft.salary_text ?? '',
-    skills: (draft.skills ?? []).join(', '),
-    software: (draft.software ?? []).join(', '),
-    keywords: (draft.keywords ?? []).join(', '),
-    certifications: (draft.certifications ?? []).join(', '),
+    skills: joinTagList(draft.skills ?? []),
+    software: joinTagList(draft.software ?? []),
+    keywords: joinTagList(draft.keywords ?? []),
+    certifications: joinTagList(draft.certifications ?? []),
   };
+}
+
+/**
+ * Applies a fresh extraction to existing form values without discarding the
+ * user's taxonomy edits: scalar fields take the extracted draft's values
+ * (today's re-extract behavior), while each of the four taxonomy categories
+ * merges per category -- current values first, newly extracted values
+ * appended, case-insensitive dedup within the category only. A value present
+ * under one category is never moved to, or deduplicated against, another, so
+ * the same name may deliberately live in two categories.
+ */
+export function applyExtractionPreservingTaxonomy(
+  current: PopupFormValues,
+  draft: Partial<JobDraft>,
+): PopupFormValues {
+  const next = draftToFormValues(draft);
+
+  for (const field of TAXONOMY_FIELDS) {
+    next[field] = joinTagList(
+      mergeTaxonomyTags(parseTagList(current[field]), draft[field] ?? []),
+    );
+  }
+
+  return next;
 }
 
 /**
@@ -180,8 +208,8 @@ function setListField(
   key: string,
   raw: string,
 ): void {
-  const list = parseFormList(raw);
-  if (list) draft[key] = list;
+  const list = parseTagList(raw);
+  if (list.length) draft[key] = list;
 }
 
 function parseFormNumber(raw: string): number | undefined {
@@ -189,14 +217,6 @@ function parseFormNumber(raw: string): number | undefined {
   if (!trimmed) return undefined;
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function parseFormList(raw: string): string[] | undefined {
-  const list = raw
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-  return list.length ? list : undefined;
 }
 
 function numberToFormString(value: number | undefined): string {
@@ -250,6 +270,14 @@ export function validateFormValues(values: PopupFormValues): FieldError[] {
     }
   }
 
+  // Each taxonomy category validates independently: an over-long skill never
+  // flags the software group, and a duplicate is only a duplicate within its
+  // own category.
+  for (const field of TAXONOMY_FIELDS) {
+    const message = validateTagList(field, parseTagList(values[field]));
+    if (message) errors.push({ field, message });
+  }
+
   return errors;
 }
 
@@ -273,7 +301,7 @@ function isValidUrl(value: string): boolean {
 // --- candidate review mode ---------------------------------------------------
 
 export type ExtractionCandidateSource =
-  'jsonld' | 'dom' | 'meta' | 'visible-text' | 'url';
+  'jsonld' | 'dom' | 'meta' | 'visible-text' | 'url' | 'description';
 
 export const CANDIDATE_SOURCE_LABELS: Record<
   ExtractionCandidateSource,
@@ -284,6 +312,7 @@ export const CANDIDATE_SOURCE_LABELS: Record<
   meta: 'From meta tags',
   'visible-text': 'From page text',
   url: 'From URL',
+  description: 'From description scan',
 };
 
 export function formatCandidateValue(value: unknown): string {

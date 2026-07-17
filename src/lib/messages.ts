@@ -81,7 +81,16 @@ export const clearPopupDraftRequestSchema = z.object({
 
 export const extractionCandidateSchema = z.object({
   value: z.unknown(),
-  source: z.enum(['jsonld', 'dom', 'meta', 'visible-text', 'url']),
+  // 'description' marks taxonomy values derived from scanning the selected
+  // job description against the canonical catalog (see jobDraftExtractor).
+  source: z.enum([
+    'jsonld',
+    'dom',
+    'meta',
+    'visible-text',
+    'url',
+    'description',
+  ]),
   confidence: z.enum(['high', 'medium', 'low']),
 });
 
