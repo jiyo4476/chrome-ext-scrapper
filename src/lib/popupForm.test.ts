@@ -236,6 +236,14 @@ describe('firstInvalidField', () => {
     ]);
     expect(result).toBe('job_link');
   });
+
+  it('orders certifications before keywords, matching the popup DOM layout', () => {
+    const result = firstInvalidField([
+      { field: 'keywords', message: 'bad' },
+      { field: 'certifications', message: 'bad' },
+    ]);
+    expect(result).toBe('certifications');
+  });
 });
 
 describe('candidate review mode', () => {

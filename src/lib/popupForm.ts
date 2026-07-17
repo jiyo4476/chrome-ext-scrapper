@@ -88,8 +88,8 @@ export const FORM_FIELD_ORDER: DraftFormField[] = [
   'salary_text',
   'skills',
   'software',
-  'keywords',
   'certifications',
+  'keywords',
 ];
 
 export function emptyFormValues(): PopupFormValues {

@@ -67,10 +67,6 @@ export const TAXONOMY_GROUP_COPY: Record<TaxonomyField, TaxonomyGroupCopy> = {
   },
 };
 
-export function isTaxonomyField(field: string): field is TaxonomyField {
-  return (TAXONOMY_FIELDS as readonly string[]).includes(field);
-}
-
 /** Parses the comma-separated form-value representation into a tag list. */
 export function parseTagList(raw: string): string[] {
   return raw

@@ -1696,6 +1696,25 @@ describe('extractJobDraft — LinkedIn DOM extraction', () => {
     expect(draft.salary_max).toBeUndefined();
   });
 
+  it('rejects a lowercase non-USD currency prefix before the dollar sign', async () => {
+    document.title = 'Engineer | Acme Corp | LinkedIn';
+    setBody(`
+      <div data-testid="lazy-column">
+        <a href="https://www.linkedin.com/company/acme-corp/">Acme Corp</a>
+        <p><span>Mumbai, India</span> · <span>Posted today</span></p>
+        <span>inr $120,000/yr - inr $150,000/yr</span>
+        <section><h2>About the job</h2><p>Build reliable tools.</p></section>
+      </div>
+    `);
+
+    const { draft } = await extractJobDraft(LINKEDIN);
+
+    expect(draft.salary_text).toBeUndefined();
+    expect(draft.salary_type).toBeUndefined();
+    expect(draft.salary_min).toBeUndefined();
+    expect(draft.salary_max).toBeUndefined();
+  });
+
   it.each([
     'CA$120,000 - CA$150,000 per year',
     'A$120,000 - A$150,000 per year',

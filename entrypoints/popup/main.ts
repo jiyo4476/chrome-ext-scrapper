@@ -228,11 +228,18 @@ function setTagFieldError(
 }
 
 /**
- * Commits the category's pending add-box text as a new tag. Returns true
- * when the input was empty or the tag was added; false when validation
- * rejected the value (the category-specific error is shown inline).
+ * Commits the category's pending add-box text as one or more new tags: the
+ * raw text is split on commas so a pasted list (e.g. "Python, Django") adds
+ * each term separately instead of becoming one malformed entry. Returns true
+ * when the input was empty or every term was added; false when validation
+ * rejected a term (the category-specific error is shown inline and the
+ * unprocessed remainder, including the rejected term, is left in the input).
+ *
+ * `persist` is false when called from {@link commitAllPendingTagInputs},
+ * which persists once after every category has been committed instead of
+ * once per category.
  */
-function commitPendingTagInput(field: TaxonomyField): boolean {
+function commitPendingTagInput(field: TaxonomyField, persist = true): boolean {
   const input = getFieldElement(field);
   if (!input) return true;
 
@@ -242,32 +249,54 @@ function commitPendingTagInput(field: TaxonomyField): boolean {
     return true;
   }
 
-  const result = addTag(field, tagState[field], raw);
-  if (!result.ok) {
-    setTagFieldError(field, result.error);
-    input.focus();
-    return false;
+  const parts = raw
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  let tags = tagState[field];
+  let index = 0;
+  let ok = true;
+
+  for (; index < parts.length; index += 1) {
+    const part = parts[index] ?? '';
+    const result = addTag(field, tags, part);
+    if (!result.ok) {
+      setTagFieldError(field, result.error);
+      ok = false;
+      break;
+    }
+    tags = result.tags;
   }
 
-  tagState[field] = result.tags;
-  input.value = '';
-  setTagFieldError(field, undefined);
-  renderTagChips(field);
-  formRevision += 1;
-  void persistCurrentDraft();
-  return true;
+  const changed = tags !== tagState[field];
+  tagState[field] = tags;
+  input.value = ok ? '' : parts.slice(index).join(', ');
+  if (ok) setTagFieldError(field, undefined);
+  if (changed) {
+    renderTagChips(field);
+    formRevision += 1;
+    if (persist) void persistCurrentDraft();
+  }
+  if (!ok) input.focus();
+  return ok;
 }
 
 /**
  * Commits pending add-box text in every category (used before save/export so
- * typed-but-unadded values are not silently dropped). Returns the first
- * category whose pending value failed validation, if any.
+ * typed-but-unadded values are not silently dropped), persisting once
+ * afterward instead of once per category. Returns the first category whose
+ * pending value failed validation, if any.
  */
 function commitAllPendingTagInputs(): TaxonomyField | undefined {
+  let failedField: TaxonomyField | undefined;
   for (const field of TAXONOMY_FIELDS) {
-    if (!commitPendingTagInput(field)) return field;
+    if (!commitPendingTagInput(field, false)) {
+      failedField = field;
+      break;
+    }
   }
-  return undefined;
+  void persistCurrentDraft();
+  return failedField;
 }
 
 function removeTagChip(field: TaxonomyField, index: number): void {
@@ -750,14 +779,29 @@ function readFormValues(): PopupFormValues {
     hourly_rate_min: getValue('hourly_rate_min'),
     hourly_rate_max: getValue('hourly_rate_max'),
     salary_text: getValue('salary_text'),
-    // The four taxonomy categories read from committed tag state, not the
-    // visible inputs -- those are add boxes whose pending text is committed
-    // separately (see commitPendingTagInput).
-    skills: joinTagList(tagState.skills),
-    software: joinTagList(tagState.software),
-    keywords: joinTagList(tagState.keywords),
-    certifications: joinTagList(tagState.certifications),
+    // The four taxonomy categories read from committed tag state plus any
+    // not-yet-committed add-box text (see taxonomyFormValue) -- otherwise
+    // text typed but not yet submitted via Enter/comma/Add would be silently
+    // dropped from the draft persisted on every keystroke.
+    skills: taxonomyFormValue('skills'),
+    software: taxonomyFormValue('software'),
+    keywords: taxonomyFormValue('keywords'),
+    certifications: taxonomyFormValue('certifications'),
   };
+}
+
+/**
+ * Serializes one taxonomy category to the comma-separated form-value string,
+ * appending any uncommitted add-box text. This is what makes a popup-close
+ * mid-typing recoverable: persistCurrentDraft (fired on every 'input' event)
+ * captures the pending text here, and applyFormValues() folds it back in as
+ * a committed tag on restore instead of losing it.
+ */
+function taxonomyFormValue(field: TaxonomyField): string {
+  const committed = joinTagList(tagState[field]);
+  const pending = getFieldElement(field)?.value.trim() ?? '';
+  if (!pending) return committed;
+  return committed ? `${committed}, ${pending}` : pending;
 }
 
 function applyFormValues(values: PopupFormValues): void {

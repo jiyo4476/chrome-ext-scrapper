@@ -7,6 +7,7 @@ import {
   type JobDraft,
 } from '../schemas';
 import { extractTaxonomy } from './taxonomyExtractor';
+import { mergeTaxonomyTags } from '../taxonomyFields';
 
 // '#text' must be listed explicitly alongside KEEP_CONTENT: false below --
 // without it, DOMPurify treats bare text nodes as unlisted too and strips
@@ -1591,8 +1592,9 @@ export async function extractJobDraft(detection: {
       }
     | undefined {
     const hasUsdMarker = (text: string): boolean =>
-      !/\b(?!US(?:D)?\b)[A-Z]{1,3}\s*\$/.test(text) &&
-      /(?:\bUSD\b|\bUS\$|(?<![A-Za-z])\$)/i.test(text);
+      !/\b(?!US(?:D)?\b|TO\b|UP\b|IS\b|AT\b|OF\b|A\b)[A-Z]{1,3}\s*\$/i.test(
+        text,
+      ) && /(?:\bUSD\b|\bUS\$|(?<![A-Za-z])\$)/i.test(text);
     const isUnitlessAnnualUpperBound = (text: string): boolean =>
       /^\s*(?:(?:base\s+)?(?:salary|pay|compensation)\s*)?up\s+to\s+(?:USD\s*\$?|US\$|(?<![A-Za-z])\$)\s*[\d,.]+\s*k\s*$/i.test(
         text,
@@ -2414,16 +2416,7 @@ export async function extractJobDraft(detection: {
       const provided = Array.isArray(draft[field])
         ? (draft[field] as string[])
         : [];
-      const merged: string[] = [];
-      const seen = new Set<string>();
-
-      for (const value of [...provided, ...extracted[field]]) {
-        const key = value.toLocaleLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        merged.push(value);
-        if (merged.length === MAX_TAGS_PER_FIELD) break;
-      }
+      const merged = mergeTaxonomyTags(provided, extracted[field]);
 
       if (merged.length > 0) {
         draft[field] = merged;
