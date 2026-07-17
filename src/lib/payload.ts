@@ -13,7 +13,7 @@ export function buildScrapePayload(draft: JobDraft): ScrapePayload {
     job_title: cleanString(draft.job_title),
     job_link: cleanString(draft.job_link),
     job_location: cleanString(draft.job_location),
-    job_description: cleanString(draft.job_description),
+    job_description: cleanMultilineString(draft.job_description),
     salary_text: cleanString(draft.salary_text),
     skills: cleanTagArray(draft.skills),
     software: cleanTagArray(draft.software),
@@ -28,6 +28,20 @@ export function buildScrapePayload(draft: JobDraft): ScrapePayload {
 function cleanString(value: string | undefined): string | undefined {
   const trimmed = value?.replace(/\s+/g, ' ').trim();
   return trimmed || undefined;
+}
+
+function cleanMultilineString(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+
+  const lines = value.replace(/\r\n?/g, '\n').split('\n');
+  let start = 0;
+  let end = lines.length;
+
+  while (start < end && lines[start]?.trim() === '') start += 1;
+  while (end > start && lines[end - 1]?.trim() === '') end -= 1;
+
+  const cleaned = lines.slice(start, end).join('\n');
+  return cleaned || undefined;
 }
 
 /**

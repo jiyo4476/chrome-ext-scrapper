@@ -17,10 +17,10 @@ export interface TaxonomyEntry {
 
 /** SHA-256 of the canonical JSON of the four catalogs below. */
 export const CATALOG_HASH =
-  '9f9eba8219f45b56586e8137d2d135e126abee81dcd812c43836fd2d6606471c';
+  'e579d39dc63146bbdc2d472a1099276fc7ca07c02165748ad0ccfe773f7e634c';
 
 /** Human-readable catalog version; changes exactly when content changes. */
-export const CATALOG_VERSION = 'sha256:9f9eba8219f4';
+export const CATALOG_VERSION = 'sha256:e579d39dc631';
 
 // Skills: languages, practices, methods, and capabilities.
 export const SKILLS: readonly TaxonomyEntry[] = [
@@ -101,6 +101,7 @@ export const SKILLS: readonly TaxonomyEntry[] = [
   { canonical: 'SOC 2 Compliance', aliases: ['SOC 2'] },
   { canonical: 'OWASP Top 10', aliases: ['OWASP'] },
   { canonical: 'Encryption' },
+  { canonical: 'Incident Response' },
   { canonical: 'Security Clearance — TS/SCI', aliases: ['TS/SCI'] },
   { canonical: 'Security Clearance — Secret' },
   { canonical: 'Concurrency & Parallelism', aliases: ['Concurrency'] },
@@ -130,6 +131,7 @@ export const SKILLS: readonly TaxonomyEntry[] = [
   { canonical: 'Cross-Functional Collaboration' },
   { canonical: 'Stakeholder Communication' },
   { canonical: 'Agile / Scrum', aliases: ['Scrum', 'Agile'] },
+  { canonical: 'Project Management' },
   { canonical: 'Technical Writing' },
   { canonical: 'Problem Solving' },
   { canonical: 'Kanban' },
