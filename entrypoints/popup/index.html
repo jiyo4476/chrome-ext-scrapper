@@ -295,29 +295,14 @@
                 <input id="salary-text" name="salary_text" autocomplete="off" />
               </label>
 
-              <label for="skills">
-                Skills (comma-separated)
-                <input id="skills" name="skills" autocomplete="off" />
-              </label>
-
-              <label for="software">
-                Software (comma-separated)
-                <input id="software" name="software" autocomplete="off" />
-              </label>
-
-              <label for="keywords">
-                Keywords (comma-separated)
-                <input id="keywords" name="keywords" autocomplete="off" />
-              </label>
-
-              <label for="certifications">
-                Certifications (comma-separated)
-                <input
-                  id="certifications"
-                  name="certifications"
-                  autocomplete="off"
-                />
-              </label>
+              <!--
+                Four independent taxonomy groups (Skills, Software,
+                Certifications, Keywords) are rendered here by main.ts from
+                TAXONOMY_GROUP_COPY so labels, help text, and empty states
+                have a single source of truth. There is deliberately no
+                generic "tags" field.
+              -->
+              <div id="taxonomy-groups" class="taxonomy-groups"></div>
             </div>
           </details>
         </form>

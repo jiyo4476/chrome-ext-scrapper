@@ -12,8 +12,8 @@ import {
 } from '../../src/lib/jsonld';
 import {
   applyCandidateSelection,
+  applyExtractionPreservingTaxonomy,
   CANDIDATE_SOURCE_LABELS,
-  draftToFormValues,
   type DraftFormField,
   emptyFormValues,
   type FieldError,
@@ -24,6 +24,15 @@ import {
   type PopupFormValues,
   validateFormValues,
 } from '../../src/lib/popupForm';
+import {
+  addTag,
+  joinTagList,
+  parseTagList,
+  removeTagAt,
+  TAXONOMY_FIELDS,
+  TAXONOMY_GROUP_COPY,
+  type TaxonomyField,
+} from '../../src/lib/taxonomyFields';
 import type { JobDraft } from '../../src/lib/schemas';
 import type { PopupDraftContext } from '../../src/lib/popupDraft';
 
@@ -59,6 +68,7 @@ const ERROR_FIELDS: DraftFormField[] = [
   'salary_max',
   'hourly_rate_min',
   'hourly_rate_max',
+  ...TAXONOMY_FIELDS,
 ];
 
 const statusEl = document.querySelector<HTMLDivElement>('#status');
@@ -77,6 +87,207 @@ const saveButton = document.querySelector<HTMLButtonElement>('#save-button');
 let saveInFlight = false;
 let formRevision = 0;
 let popupDraftContext: PopupDraftContext | undefined;
+
+// Committed values for the four taxonomy categories, keyed by category. The
+// visible per-category input is only an "add" box; the source of truth for
+// each category's values is this state, so a value entered under Skills can
+// never drift into Software (and vice versa).
+const tagState: Record<TaxonomyField, string[]> = {
+  skills: [],
+  software: [],
+  certifications: [],
+  keywords: [],
+};
+
+/**
+ * Renders the four taxonomy groups (Skills, Software, Certifications,
+ * Keywords) into #taxonomy-groups. Each group is an independent fieldset
+ * with its own label, help text, empty state, chip list, add input, and
+ * error region -- built once at startup from TAXONOMY_GROUP_COPY.
+ */
+function renderTaxonomyGroups(): void {
+  const container = document.getElementById('taxonomy-groups');
+  if (!container) return;
+
+  for (const field of TAXONOMY_FIELDS) {
+    const copy = TAXONOMY_GROUP_COPY[field];
+
+    const group = document.createElement('fieldset');
+    group.className = 'tag-group';
+
+    const legend = document.createElement('legend');
+    legend.textContent = copy.label;
+
+    const help = document.createElement('p');
+    help.className = 'tag-help';
+    help.id = `help-${field}`;
+    help.textContent = copy.helpText;
+
+    const list = document.createElement('ul');
+    list.className = 'tag-list';
+    list.id = `tags-${field}`;
+    list.setAttribute('aria-label', `${copy.label} values`);
+    list.hidden = true;
+
+    const empty = document.createElement('p');
+    empty.className = 'tag-empty';
+    empty.id = `empty-${field}`;
+    empty.textContent = copy.emptyState;
+
+    const addRow = document.createElement('div');
+    addRow.className = 'tag-add-row';
+
+    const input = document.createElement('input');
+    input.id = FIELD_IDS[field];
+    input.name = field;
+    input.autocomplete = 'off';
+    input.setAttribute('aria-label', copy.addLabel);
+    input.setAttribute('aria-describedby', `help-${field} error-${field}`);
+    input.placeholder = copy.addLabel;
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ',') {
+        event.preventDefault();
+        commitPendingTagInput(field);
+      }
+    });
+
+    const addButton = document.createElement('button');
+    addButton.type = 'button';
+    addButton.id = `add-${field}`;
+    addButton.textContent = 'Add';
+    addButton.setAttribute('aria-label', copy.addLabel);
+    addButton.addEventListener('click', () => {
+      commitPendingTagInput(field);
+      input.focus();
+    });
+
+    addRow.append(input, addButton);
+
+    const error = document.createElement('div');
+    error.className = 'field-error';
+    error.id = `error-${field}`;
+    error.setAttribute('role', 'alert');
+    error.hidden = true;
+
+    const candidates = document.createElement('div');
+    candidates.className = 'candidate-picker';
+    candidates.id = `candidates-${field}`;
+    candidates.setAttribute('role', 'radiogroup');
+    candidates.setAttribute(
+      'aria-label',
+      `Alternative values for ${copy.label}`,
+    );
+    candidates.hidden = true;
+
+    group.append(legend, help, list, empty, addRow, error, candidates);
+    container.appendChild(group);
+  }
+}
+
+/** Redraws one category's chips and toggles its empty state. */
+function renderTagChips(field: TaxonomyField): void {
+  const list = document.getElementById(`tags-${field}`);
+  const empty = document.getElementById(`empty-${field}`);
+  if (!list || !empty) return;
+
+  const copy = TAXONOMY_GROUP_COPY[field];
+  const tags = tagState[field];
+
+  list.innerHTML = '';
+  list.hidden = tags.length === 0;
+  empty.hidden = tags.length > 0;
+
+  tags.forEach((tag, index) => {
+    const item = document.createElement('li');
+    item.className = 'tag-chip';
+
+    const text = document.createElement('span');
+    text.textContent = tag;
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', `Remove ${tag} from ${copy.label}`);
+    remove.addEventListener('click', () => {
+      removeTagChip(field, index);
+    });
+
+    item.append(text, remove);
+    list.appendChild(item);
+  });
+}
+
+function setTagFieldError(
+  field: TaxonomyField,
+  message: string | undefined,
+): void {
+  const el = document.getElementById(`error-${field}`);
+  if (!el) return;
+  el.textContent = message ?? '';
+  el.hidden = !message;
+}
+
+/**
+ * Commits the category's pending add-box text as a new tag. Returns true
+ * when the input was empty or the tag was added; false when validation
+ * rejected the value (the category-specific error is shown inline).
+ */
+function commitPendingTagInput(field: TaxonomyField): boolean {
+  const input = getFieldElement(field);
+  if (!input) return true;
+
+  const raw = input.value;
+  if (!raw.trim()) {
+    input.value = '';
+    return true;
+  }
+
+  const result = addTag(field, tagState[field], raw);
+  if (!result.ok) {
+    setTagFieldError(field, result.error);
+    input.focus();
+    return false;
+  }
+
+  tagState[field] = result.tags;
+  input.value = '';
+  setTagFieldError(field, undefined);
+  renderTagChips(field);
+  formRevision += 1;
+  void persistCurrentDraft();
+  return true;
+}
+
+/**
+ * Commits pending add-box text in every category (used before save/export so
+ * typed-but-unadded values are not silently dropped). Returns the first
+ * category whose pending value failed validation, if any.
+ */
+function commitAllPendingTagInputs(): TaxonomyField | undefined {
+  for (const field of TAXONOMY_FIELDS) {
+    if (!commitPendingTagInput(field)) return field;
+  }
+  return undefined;
+}
+
+function removeTagChip(field: TaxonomyField, index: number): void {
+  tagState[field] = removeTagAt(tagState[field], index);
+  setTagFieldError(field, undefined);
+  renderTagChips(field);
+  formRevision += 1;
+  void persistCurrentDraft();
+
+  // Keep focus inside the group: land on the next chip's remove button, or
+  // fall back to the category's add input when the last chip was removed.
+  const list = document.getElementById(`tags-${field}`);
+  const buttons = list?.querySelectorAll('button');
+  const nextButton = buttons?.[Math.min(index, (buttons.length || 1) - 1)];
+  if (buttons && buttons.length > 0 && nextButton) {
+    nextButton.focus();
+  } else {
+    getFieldElement(field)?.focus();
+  }
+}
 
 form?.addEventListener('input', () => {
   formRevision += 1;
@@ -99,6 +310,7 @@ signInButton?.addEventListener('click', () => {
   void signIn();
 });
 
+renderTaxonomyGroups();
 void initializePopup();
 
 async function initializePopup(): Promise<void> {
@@ -246,6 +458,11 @@ async function saveJob(): Promise<void> {
   if (saveInFlight) return;
 
   clearFieldErrors();
+  const pendingTagField = commitAllPendingTagInputs();
+  if (pendingTagField) {
+    setStatus('Fix the highlighted fields before saving.', 'alert');
+    return;
+  }
   const values = readFormValues();
   const errors = validateFormValues(values);
   if (errors.length > 0) {
@@ -308,6 +525,11 @@ function enterManualEntry(): void {
 
 function exportJsonLd(): void {
   clearFieldErrors();
+  const pendingTagField = commitAllPendingTagInputs();
+  if (pendingTagField) {
+    setStatus('Fix the highlighted fields before exporting.', 'alert');
+    return;
+  }
   const values = readFormValues();
   const errors = validateFormValues(values);
   if (errors.length > 0) {
@@ -351,7 +573,13 @@ function renderResponse(response: ExtensionResponse): void {
   }
 
   if (response.type === 'EXTRACT_ACTIVE_TAB_RESULT') {
-    applyFormValues(draftToFormValues(response.draft));
+    // Re-extract merges per taxonomy category instead of overwriting: the
+    // user's Skills/Software/Certifications/Keywords edits stay first and in
+    // their categories, with newly extracted values appended (see
+    // applyExtractionPreservingTaxonomy).
+    applyFormValues(
+      applyExtractionPreservingTaxonomy(readFormValues(), response.draft),
+    );
     formRevision += 1;
     void persistCurrentDraft();
     renderCandidates(response.candidates);
@@ -522,10 +750,13 @@ function readFormValues(): PopupFormValues {
     hourly_rate_min: getValue('hourly_rate_min'),
     hourly_rate_max: getValue('hourly_rate_max'),
     salary_text: getValue('salary_text'),
-    skills: getValue('skills'),
-    software: getValue('software'),
-    keywords: getValue('keywords'),
-    certifications: getValue('certifications'),
+    // The four taxonomy categories read from committed tag state, not the
+    // visible inputs -- those are add boxes whose pending text is committed
+    // separately (see commitPendingTagInput).
+    skills: joinTagList(tagState.skills),
+    software: joinTagList(tagState.software),
+    keywords: joinTagList(tagState.keywords),
+    certifications: joinTagList(tagState.certifications),
   };
 }
 
@@ -548,10 +779,13 @@ function applyFormValues(values: PopupFormValues): void {
   setValue('hourly_rate_min', values.hourly_rate_min);
   setValue('hourly_rate_max', values.hourly_rate_max);
   setValue('salary_text', values.salary_text);
-  setValue('skills', values.skills);
-  setValue('software', values.software);
-  setValue('keywords', values.keywords);
-  setValue('certifications', values.certifications);
+
+  for (const field of TAXONOMY_FIELDS) {
+    tagState[field] = parseTagList(values[field]);
+    setValue(field, '');
+    setTagFieldError(field, undefined);
+    renderTagChips(field);
+  }
 }
 
 function clearFieldErrors(): void {
@@ -618,8 +852,11 @@ function setStatus(message: string, kind: 'status' | 'alert' = 'status'): void {
 function setBusy(disabled: boolean): void {
   form
     ?.querySelectorAll<
-      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
-    >('input, select, textarea')
+      | HTMLInputElement
+      | HTMLSelectElement
+      | HTMLTextAreaElement
+      | HTMLButtonElement
+    >('input, select, textarea, button')
     .forEach((el) => {
       el.disabled = disabled;
     });
