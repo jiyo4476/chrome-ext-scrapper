@@ -22,7 +22,7 @@ interface CatalogShape {
   skills: TaxonomyEntry[];
   software: TaxonomyEntry[];
   certifications: TaxonomyEntry[];
-  keywords: string[];
+  keywords: TaxonomyEntry[];
 }
 
 function normalizeEntries(entries: readonly TaxonomyEntry[]): TaxonomyEntry[] {
@@ -38,7 +38,7 @@ function checkedInCatalogs(): CatalogShape {
     skills: normalizeEntries(SKILLS),
     software: normalizeEntries(SOFTWARE),
     certifications: normalizeEntries(CERTIFICATIONS),
-    keywords: [...KEYWORDS],
+    keywords: normalizeEntries(KEYWORDS),
   };
 }
 
@@ -56,11 +56,8 @@ const BACKEND_CATALOG_PATH = resolve(
 
 function loadBackendCatalogs(sourcePath: string): CatalogShape {
   const source = readFileSync(sourcePath, 'utf8');
-  const withKeywordsExported = /^export const KEYWORDS\b/m.test(source)
-    ? source
-    : source.replace(/^const KEYWORDS =/m, 'export const KEYWORDS =');
 
-  const transpiled = ts.transpileModule(withKeywordsExported, {
+  const transpiled = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
       target: ts.ScriptTarget.ES2022,
@@ -84,7 +81,9 @@ function loadBackendCatalogs(sourcePath: string): CatalogShape {
     certifications: normalizeEntries(
       moduleShim.exports.CERTIFICATION_CATALOG as TaxonomyEntry[],
     ),
-    keywords: [...(moduleShim.exports.KEYWORDS as string[])],
+    keywords: normalizeEntries(
+      moduleShim.exports.KEYWORD_CATALOG as TaxonomyEntry[],
+    ),
   };
 }
 
@@ -111,7 +110,7 @@ describe('taxonomyCatalog integrity', () => {
     expect(canonicalsOf(CERTIFICATIONS)).toContain('CISSP');
     expect(canonicalsOf(SOFTWARE)).toContain('Docker');
     expect(canonicalsOf(SKILLS)).toContain('Python');
-    expect(KEYWORDS).toContain('remote');
+    expect(canonicalsOf(KEYWORDS)).toContain('remote');
   });
 });
 

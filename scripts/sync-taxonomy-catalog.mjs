@@ -32,22 +32,11 @@ export const DEFAULT_BACKEND_CATALOG_PATH = resolve(
 
 const OUTPUT_PATH = resolve(repoRoot, 'src/lib/extraction/taxonomyCatalog.ts');
 
-/**
- * Loads the backend catalog module. `KEYWORDS` is module-private in the
- * backend, so it is promoted to an export before transpiling; everything
- * else is read from the module's own exports.
- */
+/** Loads the four catalogs from the backend module's own exports. */
 export function loadBackendCatalogs(sourcePath) {
   const source = readFileSync(sourcePath, 'utf8');
 
-  const withKeywordsExported = /^export const KEYWORDS\b/m.test(source)
-    ? source
-    : source.replace(/^const KEYWORDS =/m, 'export const KEYWORDS =');
-  if (!/^export const KEYWORDS\b/m.test(withKeywordsExported)) {
-    throw new Error(`Could not find the KEYWORDS catalog in ${sourcePath}`);
-  }
-
-  const transpiled = ts.transpileModule(withKeywordsExported, {
+  const transpiled = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
       target: ts.ScriptTarget.ES2022,
@@ -61,14 +50,18 @@ export function loadBackendCatalogs(sourcePath) {
     require,
   });
 
-  const { SKILL_CATALOG, SOFTWARE_CATALOG, CERTIFICATION_CATALOG, KEYWORDS } =
-    moduleShim.exports;
+  const {
+    SKILL_CATALOG,
+    SOFTWARE_CATALOG,
+    CERTIFICATION_CATALOG,
+    KEYWORD_CATALOG,
+  } = moduleShim.exports;
 
   for (const [name, value] of Object.entries({
     SKILL_CATALOG,
     SOFTWARE_CATALOG,
     CERTIFICATION_CATALOG,
-    KEYWORDS,
+    KEYWORD_CATALOG,
   })) {
     if (!Array.isArray(value) || value.length === 0) {
       throw new Error(`Backend catalog export ${name} is missing or empty`);
@@ -79,7 +72,7 @@ export function loadBackendCatalogs(sourcePath) {
     skills: SKILL_CATALOG,
     software: SOFTWARE_CATALOG,
     certifications: CERTIFICATION_CATALOG,
-    keywords: KEYWORDS,
+    keywords: KEYWORD_CATALOG,
   });
 }
 
@@ -104,7 +97,7 @@ export function normalizeCatalogs({
     skills: normalizeEntries(skills),
     software: normalizeEntries(software),
     certifications: normalizeEntries(certifications),
-    keywords: [...keywords],
+    keywords: normalizeEntries(keywords),
   };
 }
 
@@ -165,8 +158,8 @@ export function renderCatalogModule(catalogs) {
     '',
     '// Keywords: contextual labels, not a structured taxonomy. Overlap with',
     '// skills (e.g. "microservices") is intentional and allowed.',
-    'export const KEYWORDS: readonly string[] = [',
-    ...catalogs.keywords.map((keyword) => `  ${JSON.stringify(keyword)},`),
+    'export const KEYWORDS: readonly TaxonomyEntry[] = [',
+    ...catalogs.keywords.map(renderEntry),
     '];',
     '',
   ];

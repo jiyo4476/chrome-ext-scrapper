@@ -84,9 +84,7 @@ assertExclusiveOwnership([SKILLS, SOFTWARE, CERTIFICATIONS]);
 const COMPILED_SKILLS = compileTaxonomy(SKILLS);
 const COMPILED_SOFTWARE = compileTaxonomy(SOFTWARE);
 const COMPILED_CERTIFICATIONS = compileTaxonomy(CERTIFICATIONS);
-const COMPILED_KEYWORDS = compileTaxonomy(
-  KEYWORDS.map((keyword) => ({ canonical: keyword })),
-);
+const COMPILED_KEYWORDS = compileTaxonomy(KEYWORDS);
 
 function matchTaxonomy(
   description: string,
