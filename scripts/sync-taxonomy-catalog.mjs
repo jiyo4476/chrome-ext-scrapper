@@ -101,7 +101,10 @@ export function normalizeCatalogs({
   };
 }
 
-/** Must stay in lockstep with catalogContentHash() in taxonomyCatalog.test.ts. */
+/**
+ * SHA-256 over the canonical JSON of the normalized catalogs. taxonomyCatalog.test.ts
+ * imports this directly, so the generator and the parity test hash identically.
+ */
 export function catalogContentHash(catalogs) {
   return createHash('sha256').update(JSON.stringify(catalogs)).digest('hex');
 }
