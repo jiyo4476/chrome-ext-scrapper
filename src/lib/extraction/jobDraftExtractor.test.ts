@@ -1913,6 +1913,109 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
     expect(draft.job_title).toBeUndefined();
   });
 
+  it('scrapes the job link and ID from the aria-pressed selected card', async () => {
+    setLocation('https://www.indeed.com/jobs?q=engineer&vjk=stale-999');
+    setBody(`
+      <ul>
+        <li>
+          <h2><a data-jk="other-111" href="/rc/clk?jk=other-111">Other Job</a></h2>
+        </li>
+        <li>
+          <h2><a data-jk="selected-123" aria-pressed="true" href="/rc/clk?jk=selected-123">Staff Engineer</a></h2>
+          <span data-testid="company-name">Acme Corp</span>
+          <div data-testid="text-location">Austin, TX</div>
+          <div data-testid="attribute_snippet_testid">$150,000 - $180,000 a year</div>
+          <div data-testid="attribute_snippet_testid">Full-time</div>
+        </li>
+      </ul>
+      <h1 class="jobsearch-JobInfoHeader-title">Staff Engineer</h1>
+      <div id="jobDescriptionText">Lead the platform team.</div>
+    `);
+
+    const { draft } = await extractJobDraft({
+      ...INDEED,
+      externalJobId: 'stale-999',
+    });
+
+    expect(draft.external_job_id).toBe('selected-123');
+    expect(draft.job_link).toBe(
+      'https://www.indeed.com/viewjob?jk=selected-123',
+    );
+    expect(draft.job_title).toBe('Staff Engineer');
+    expect(draft.company_name).toBe('Acme Corp');
+    expect(draft.job_location).toBe('Austin, TX');
+    expect(draft.salary_text).toBe('$150,000 - $180,000 a year');
+    expect(draft.job_type).toBe('full_time');
+  });
+
+  it('prefers the selected card title over the serp header h1', async () => {
+    setLocation('https://www.indeed.com/jobs?q=engineer&vjk=abc');
+    setBody(`
+      <h1>engineer jobs in Austin, TX</h1>
+      <li>
+        <h2><a data-jk="abc" aria-pressed="true" href="/rc/clk?jk=abc">Backend Engineer</a></h2>
+      </li>
+      <div id="jobDescriptionText">Build services.</div>
+    `);
+
+    const { draft } = await extractJobDraft(INDEED);
+
+    expect(draft.job_title).toBe('Backend Engineer');
+  });
+
+  it('finds the selected card when aria-pressed is on a wrapper element', async () => {
+    setLocation('https://www.indeed.com/jobs?q=engineer&vjk=wrap-42');
+    setBody(`
+      <li>
+        <div aria-pressed="true">
+          <h2><a data-jk="wrap-42" href="/rc/clk?jk=wrap-42">Platform Engineer</a></h2>
+        </div>
+      </li>
+      <h1 class="jobsearch-JobInfoHeader-title">Platform Engineer</h1>
+      <div id="jobDescriptionText">Description.</div>
+    `);
+
+    const { draft } = await extractJobDraft(INDEED);
+
+    expect(draft.external_job_id).toBe('wrap-42');
+    expect(draft.job_link).toBe('https://www.indeed.com/viewjob?jk=wrap-42');
+  });
+
+  it('falls back to the jk href param when the selected card has no data-jk', async () => {
+    setLocation('https://www.indeed.com/jobs?q=engineer&vjk=href-77');
+    setBody(`
+      <li>
+        <h2><a aria-pressed="true" href="/rc/clk?jk=href-77&from=serp">SRE</a></h2>
+      </li>
+      <h1 class="jobsearch-JobInfoHeader-title">SRE</h1>
+      <div id="jobDescriptionText">Keep it running.</div>
+    `);
+
+    const { draft } = await extractJobDraft(INDEED);
+
+    expect(draft.external_job_id).toBe('href-77');
+    expect(draft.job_link).toBe('https://www.indeed.com/viewjob?jk=href-77');
+  });
+
+  it('ignores unselected cards when no card is aria-pressed', async () => {
+    setLocation('https://www.indeed.com/jobs?q=engineer&vjk=url-55');
+    setBody(`
+      <li>
+        <h2><a data-jk="other-111" href="/rc/clk?jk=other-111">Other Job</a></h2>
+      </li>
+      <h1 class="jobsearch-JobInfoHeader-title">Software Engineer</h1>
+      <div id="jobDescriptionText">Build reliable systems.</div>
+    `);
+
+    const { draft } = await extractJobDraft({
+      ...INDEED,
+      externalJobId: 'url-55',
+    });
+
+    expect(draft.external_job_id).toBe('url-55');
+    expect(draft.job_title).toBe('Software Engineer');
+  });
+
   it('uses the selected split-view vjk value as the Indeed job ID', async () => {
     window.history.replaceState({}, '', '/jobs?q=engineer&vjk=selected-123');
     setBody(`

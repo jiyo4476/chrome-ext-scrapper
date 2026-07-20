@@ -729,7 +729,97 @@ export async function extractJobDraft(detection: {
 
   // --- platform-specific DOM extraction -------------------------------------
 
+  // On Indeed's split-view search pages (/jobs?...&vjk=...), the selected
+  // card -- the one whose job the detail pane is currently showing -- is
+  // marked with aria-pressed="true". That card is the live source of truth
+  // for which posting is open: the URL's vjk param can lag behind the last
+  // click, so the card's data-jk outranks the URL-derived job ID. The
+  // pressed marker sits on the title link itself in current markup; the
+  // wrapper-level and href-only selectors below cover markup variants.
+  function extractIndeedSelectedCard(): void {
+    const anchor = queryFirst([
+      'a[data-jk][aria-pressed="true"]',
+      '[aria-pressed="true"] a[data-jk]',
+      'a[aria-pressed="true"][href*="jk="]',
+    ]);
+    if (!anchor) return;
+
+    const rawHref = anchor.getAttribute('href') ?? undefined;
+    const jkFromHref = (): string | undefined => {
+      if (!rawHref) return undefined;
+      try {
+        return (
+          new URL(rawHref, location.href).searchParams.get('jk') ?? undefined
+        );
+      } catch {
+        return undefined;
+      }
+    };
+    const jk = anchor.getAttribute('data-jk') ?? jkFromHref();
+
+    addCandidate('external_job_id', jk, 'dom', 'high');
+
+    // Prefer a canonical /viewjob link built from the card's job ID over the
+    // card's own href, which is usually an /rc/clk tracking redirect.
+    const cardLink = jk
+      ? resolveUrl(`/viewjob?jk=${encodeURIComponent(jk)}`)
+      : rawHref
+        ? resolveUrl(rawHref)
+        : undefined;
+    addCandidate('job_link', cardLink, 'dom', 'high');
+
+    // These run before the detail-pane candidates: on a tie the card wins,
+    // which matters for job_title -- the pane block's bare-h1 fallback can
+    // land on the serp's own search header (e.g. "engineer jobs in Austin"),
+    // while the card title is the selected posting's title verbatim.
+    const card = anchor.closest('li') ?? anchor;
+    addCandidate('job_title', textOf(anchor), 'dom', 'high');
+    addCandidate(
+      'company_name',
+      textOf(card.querySelector('[data-testid="company-name"]')),
+      'dom',
+      'high',
+    );
+    addCandidate(
+      'job_location',
+      textOf(card.querySelector('[data-testid="text-location"]')),
+      'dom',
+      'high',
+    );
+
+    // Snippet badges mix salary, job type, and shift text under the same
+    // testid, so classify by content instead of position.
+    const snippets = Array.from(
+      card.querySelectorAll(
+        '[data-testid="attribute_snippet_testid"], [class*="salary-snippet"]',
+      ),
+    ).flatMap((el) => {
+      const text = textOf(el);
+      return text ? [text] : [];
+    });
+    addCandidate(
+      'salary_text',
+      snippets.find((text) =>
+        /(?:[$€£]\s*\d|\d[\d,.]*\s*(?:an?\s+(?:hour|year)|per\s+(?:hour|year)|\/\s*(?:hr|yr|hour|year)))/i.test(
+          text,
+        ),
+      ),
+      'dom',
+      'medium',
+    );
+    addCandidate(
+      'job_type',
+      snippets
+        .map((text) => mapVisibleEmploymentType(text))
+        .find((value) => value !== undefined),
+      'dom',
+      'medium',
+    );
+  }
+
   async function extractIndeedDom(): Promise<void> {
+    extractIndeedSelectedCard();
+
     // Wait on title and description together -- the header commonly paints
     // before #jobDescriptionText, which Indeed often populates via a
     // follow-up XHR. Waiting on title alone would return as soon as it
