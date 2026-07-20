@@ -46,6 +46,11 @@ function getIndeedJobId(parsed: URL): string | undefined {
 // silently drift apart on which BuiltIn URLs count as a real job posting.
 const BUILTIN_JOB_PATH = /\/job\/[^/]+\/\d+\/?$/i;
 
+// Indeed serves the same split-view search UI at /jobs?q=... and at
+// SEO-style paths like /q-software-engineer-l-denver,-co-jobs.html; both
+// carry the selected job in the vjk query param.
+const INDEED_SEO_SERP_PATH = /^\/q-[^/]+-jobs\.html$/;
+
 export function isAutoScrapeUrl(url: string): boolean {
   let parsed: URL;
   try {
@@ -72,7 +77,9 @@ export function isAutoScrapeUrl(url: string): boolean {
   if (hostMatches(host, 'indeed.com')) {
     return (
       Boolean(getIndeedJobId(parsed)) &&
-      (path === '/viewjob' || path === '/jobs')
+      (path === '/viewjob' ||
+        path === '/jobs' ||
+        INDEED_SEO_SERP_PATH.test(path))
     );
   }
   if (hostMatches(host, 'glassdoor.com')) {

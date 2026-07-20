@@ -1948,6 +1948,23 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
     expect(draft.job_type).toBe('full_time');
   });
 
+  it('derives is_remote from the workplace-type prefix in the card location', async () => {
+    setLocation('https://www.indeed.com/jobs?q=engineer&vjk=abc');
+    setBody(`
+      <li>
+        <h2><a data-jk="abc" aria-pressed="true" href="/rc/clk?jk=abc">Backend Engineer</a></h2>
+        <div data-testid="text-location">Hybrid work in Centennial, CO 80112</div>
+      </li>
+      <h1 class="jobsearch-JobInfoHeader-title">Backend Engineer</h1>
+      <div id="jobDescriptionText">Build services.</div>
+    `);
+
+    const { draft } = await extractJobDraft(INDEED);
+
+    expect(draft.job_location).toBe('Hybrid work in Centennial, CO 80112');
+    expect(draft.is_remote).toBe(false);
+  });
+
   it('prefers the selected card title over the serp header h1', async () => {
     setLocation('https://www.indeed.com/jobs?q=engineer&vjk=abc');
     setBody(`

@@ -780,12 +780,14 @@ export async function extractJobDraft(detection: {
       'dom',
       'high',
     );
-    addCandidate(
-      'job_location',
-      textOf(card.querySelector('[data-testid="text-location"]')),
-      'dom',
-      'high',
+    // Real cards prefix the workplace type onto the location text (e.g.
+    // "Hybrid work in Centennial, CO 80112"), so the same string also
+    // answers is_remote.
+    const cardLocation = textOf(
+      card.querySelector('[data-testid="text-location"]'),
     );
+    addCandidate('job_location', cardLocation, 'dom', 'high');
+    addCandidate('is_remote', remoteFromText(cardLocation), 'dom', 'medium');
 
     // Snippet badges mix salary, job type, and shift text under the same
     // testid, so classify by content instead of position.
