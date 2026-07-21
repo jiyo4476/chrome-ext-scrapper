@@ -8,39 +8,54 @@
   <body>
     <main>
       <h1>engineer jobs in Austin, TX</h1>
-      <ul id="mosaic-provider-jobcards">
-        <li>
+      <div id="mosaic-jobResults">
+        <div class="job_seen_beacon">
           <h2 class="jobTitle">
             <a
               class="jcs-JobTitle"
               data-jk="other-111"
+              aria-label="full details of Other Job"
               href="/rc/clk?jk=other-111"
               >Other Job</a
             >
           </h2>
           <span data-testid="company-name">Elsewhere Inc</span>
           <div data-testid="text-location">Dallas, TX</div>
-        </li>
-        <li>
+        </div>
+        <div class="job_seen_beacon">
           <h2 class="jobTitle">
             <a
               class="jcs-JobTitle"
               data-jk="selected-123"
               aria-pressed="true"
+              aria-label="full details of Staff Engineer"
               href="/rc/clk?jk=selected-123"
               >Staff Engineer</a
             >
           </h2>
           <span data-testid="company-name">Acme Corp</span>
-          <div data-testid="text-location">Austin, TX</div>
+          <div data-testid="text-location">Hybrid work in Austin, TX</div>
           <div data-testid="attribute_snippet_testid">
             $150,000 - $180,000 a year
           </div>
           <div data-testid="attribute_snippet_testid">Full-time</div>
-        </li>
-      </ul>
-      <section>
-        <h2 data-testid="jobsearch-JobInfoHeader-title">Staff Engineer</h2>
+        </div>
+      </div>
+      <aside aria-label="Recommended jobs">
+        <div class="job_seen_beacon">
+          <a
+            data-jk="shelf-999"
+            aria-pressed="true"
+            aria-label="full details of Shelf Engineer"
+            href="/rc/clk?jk=shelf-999"
+            >Shelf Engineer</a
+          >
+        </div>
+      </aside>
+      <section class="jobsearch-RightPane">
+        <h2 data-testid="jobsearch-JobInfoHeader-title">
+          Staff Engineer - job post
+        </h2>
         <div data-testid="inlineHeader-companyName">Acme Corp</div>
         <div data-testid="inlineHeader-companyLocation">Austin, TX</div>
         <div id="jobDescriptionText">Lead the platform team.</div>

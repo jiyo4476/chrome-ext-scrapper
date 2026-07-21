@@ -338,8 +338,11 @@ export async function extractJobDraft(detection: {
     return text || undefined;
   }
 
-  function bySelector(selectors: string[]): () => Element | undefined {
-    return () => queryFirst(selectors) ?? undefined;
+  function bySelector(
+    selectors: string[],
+    root: ParentNode = document,
+  ): () => Element | undefined {
+    return () => queryFirst(selectors, root) ?? undefined;
   }
 
   // Waits on several independent element finders at once via a single
@@ -736,13 +739,57 @@ export async function extractJobDraft(detection: {
   // click, so the card's data-jk outranks the URL-derived job ID. The
   // pressed marker sits on the title link itself in current markup; the
   // wrapper-level and href-only selectors below cover markup variants.
-  function extractIndeedSelectedCard(): void {
-    const anchor = queryFirst([
+  function normalizeIndeedTitle(value: string | undefined): string | undefined {
+    const normalized = value
+      ?.replace(/^full details of\s+/i, '')
+      .replace(/\s+-\s+job post$/i, '')
+      .trim()
+      .toLocaleLowerCase();
+    return normalized || undefined;
+  }
+
+  function extractIndeedSelectedCard(detailTitle: string | undefined): boolean {
+    const primaryCards = Array.from(
+      document.querySelectorAll('#mosaic-jobResults div.job_seen_beacon'),
+    );
+    const searchRoots: Element[] = primaryCards.length
+      ? primaryCards
+      : [document.documentElement];
+    const selectedSelectors = [
       'a[data-jk][aria-pressed="true"]',
       '[aria-pressed="true"] a[data-jk]',
       'a[aria-pressed="true"][href*="jk="]',
-    ]);
-    if (!anchor) return;
+    ];
+    let anchor = searchRoots
+      .map((root) => queryFirst(selectedSelectors, root))
+      .find((candidate) => candidate !== null);
+
+    // Indeed sometimes leaves a populated pane without aria-pressed or vjk.
+    // Correlate it only when exactly one primary card has the same normalized
+    // title; duplicate-title ambiguity must not invent an identity.
+    if (!anchor && primaryCards.length && !detection.externalJobId) {
+      const normalizedDetailTitle = normalizeIndeedTitle(detailTitle);
+      if (normalizedDetailTitle) {
+        const matches = primaryCards.flatMap((card) => {
+          const candidate = queryFirst(
+            [
+              'a[data-jk][aria-label^="full details of" i]',
+              'a[data-jk]',
+              'a[href*="jk="]',
+            ],
+            card,
+          );
+          const candidateTitle = normalizeIndeedTitle(
+            candidate?.getAttribute('aria-label') ?? textOf(candidate),
+          );
+          return candidate && candidateTitle === normalizedDetailTitle
+            ? [candidate]
+            : [];
+        });
+        if (matches.length === 1) anchor = matches[0];
+      }
+    }
+    if (!anchor) return Boolean(detection.externalJobId);
 
     const rawHref = anchor.getAttribute('href') ?? undefined;
     const jkFromHref = (): string | undefined => {
@@ -772,8 +819,11 @@ export async function extractJobDraft(detection: {
     // which matters for job_title -- the pane block's bare-h1 fallback can
     // land on the serp's own search header (e.g. "engineer jobs in Austin"),
     // while the card title is the selected posting's title verbatim.
-    const card = anchor.closest('li') ?? anchor;
-    addCandidate('job_title', textOf(anchor), 'dom', 'high');
+    const card = anchor.closest('div.job_seen_beacon, li') ?? anchor;
+    const cardTitle =
+      anchor.getAttribute('aria-label')?.replace(/^full details of\s+/i, '') ??
+      textOf(anchor);
+    addCandidate('job_title', cardTitle, 'dom', 'high');
     addCandidate(
       'company_name',
       textOf(card.querySelector('[data-testid="company-name"]')),
@@ -817,58 +867,84 @@ export async function extractJobDraft(detection: {
       'dom',
       'medium',
     );
+    return true;
   }
 
   async function extractIndeedDom(): Promise<void> {
-    extractIndeedSelectedCard();
-
     // Wait on title and description together -- the header commonly paints
     // before #jobDescriptionText, which Indeed often populates via a
     // follow-up XHR. Waiting on title alone would return as soon as it
     // resolves and silently miss a still-loading description.
+    const rightPane = document.querySelector('.jobsearch-RightPane');
+    const paneRoot = rightPane ?? document.documentElement;
     const [titleEl, descriptionEl] = await waitForEach(
       [
-        bySelector([
-          'h1.jobsearch-JobInfoHeader-title',
-          '[data-testid="jobsearch-JobInfoHeader-title"]',
-          'h1',
-        ]),
-        bySelector([
-          '#jobDescriptionText',
-          '[data-testid="jobDescriptionText"]',
-        ]),
+        bySelector(
+          [
+            'h1.jobsearch-JobInfoHeader-title',
+            '[data-testid="jobsearch-JobInfoHeader-title"]',
+            'h1',
+          ],
+          paneRoot,
+        ),
+        bySelector(
+          ['#jobDescriptionText', '[data-testid="jobDescriptionText"]'],
+          paneRoot,
+        ),
       ],
       800,
     );
-    addCandidate('job_title', textOf(titleEl), 'dom', 'high');
+    const detailTitle = textOf(titleEl);
+    const hasTrustedIdentity = extractIndeedSelectedCard(detailTitle);
+    const hiddenPane =
+      rightPane !== null && getComputedStyle(rightPane).display === 'none';
+    const acceptPane = !hiddenPane || hasTrustedIdentity;
+    addCandidate(
+      'job_title',
+      acceptPane ? detailTitle?.replace(/\s+-\s+job post$/i, '') : undefined,
+      'dom',
+      'high',
+    );
     addCandidate(
       'job_description',
-      descriptionEl ? elementToSafeMarkdown(descriptionEl) : undefined,
+      acceptPane && descriptionEl
+        ? elementToSafeMarkdown(descriptionEl)
+        : undefined,
       'dom',
       'high',
     );
 
     addCandidate(
       'company_name',
-      textOf(
-        queryFirst([
-          '[data-testid="inlineHeader-companyName"]',
-          '.jobsearch-InlineCompanyRating-companyHeader a',
-          '.jobsearch-CompanyInfoContainer a',
-        ]),
-      ),
+      acceptPane
+        ? textOf(
+            queryFirst(
+              [
+                '[data-testid="inlineHeader-companyName"]',
+                '.jobsearch-InlineCompanyRating-companyHeader a',
+                '.jobsearch-CompanyInfoContainer a',
+              ],
+              paneRoot,
+            ),
+          )
+        : undefined,
       'dom',
       'high',
     );
 
     addCandidate(
       'job_location',
-      textOf(
-        queryFirst([
-          '[data-testid="inlineHeader-companyLocation"]',
-          '.jobsearch-JobInfoHeader-subtitle > div',
-        ]),
-      ),
+      acceptPane
+        ? textOf(
+            queryFirst(
+              [
+                '[data-testid="inlineHeader-companyLocation"]',
+                '.jobsearch-JobInfoHeader-subtitle > div',
+              ],
+              paneRoot,
+            ),
+          )
+        : undefined,
       'dom',
       'medium',
     );
@@ -2360,12 +2436,20 @@ export async function extractJobDraft(detection: {
 
   const titleForId =
     document.title || document.querySelector('h1')?.textContent || undefined;
-  addCandidate(
-    'external_job_id',
-    detection.externalJobId ?? inferExternalId(href, titleForId),
-    'url',
-    'medium',
-  );
+  const inferredExternalId = (() => {
+    if (detection.externalJobId) return detection.externalJobId;
+    const activeUrl = new URL(href);
+    if (
+      detection.platform === 'indeed' &&
+      activeUrl.pathname !== '/viewjob' &&
+      !activeUrl.searchParams.get('jk') &&
+      !activeUrl.searchParams.get('vjk')
+    ) {
+      return undefined;
+    }
+    return inferExternalId(href, titleForId);
+  })();
+  addCandidate('external_job_id', inferredExternalId, 'url', 'medium');
 
   // --- platform-specific dom source -----------------------------------------
   // A single dispatch table instead of a hand-written if/else chain -- adding
