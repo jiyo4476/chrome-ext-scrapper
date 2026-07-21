@@ -6,7 +6,7 @@ This file provides guidance when working in this repository.
 
 ## Obsidian Vault Location
 
-The shared project vault is the parent workspace at `C:\Users\Jimmy\Documents\Projects\job_tracker`. Project notes, task boards, provider documentation, and handoffs are stored under `C:\Users\Jimmy\Documents\Projects\job_tracker\.obsidian` (from this repository: `../.obsidian/`). Read and update that shared vault rather than creating a repository-local vault.
+This repository is one of three sibling projects inside the shared `job_tracker` workspace. The Obsidian vault is the workspace root—the directory containing `.obsidian/`, `chrome-ext-scrapper/`, `job-tracker-nextjs/`, and `job_scraper_python/`. From this repository, project notes, task boards, provider documentation, and handoffs are at `../.obsidian/`. Because the workspace's absolute path varies by contributor and operating system, locate it by resolving this repository's parent directory. Read and update that shared vault rather than creating a repository-local vault.
 
 ---
 
