@@ -4,6 +4,12 @@ This file provides guidance when working in this repository.
 
 ---
 
+## Obsidian Vault Location
+
+The shared project vault is the parent workspace at `C:\Users\Jimmy\Documents\Projects\job_tracker`. Project notes, task boards, provider documentation, and handoffs are stored under `C:\Users\Jimmy\Documents\Projects\job_tracker\.obsidian` (from this repository: `../.obsidian/`). Read and update that shared vault rather than creating a repository-local vault.
+
+---
+
 ## Status
 
 This repo is a standalone WXT Manifest V3 TypeScript extension for saving the active browser tab's visible job posting into the Job Tracker API.
