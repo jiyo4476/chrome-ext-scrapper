@@ -764,10 +764,13 @@ export async function extractJobDraft(detection: {
       .map((root) => queryFirst(selectedSelectors, root))
       .find((candidate) => candidate !== null);
 
-    // Indeed sometimes leaves a populated pane without aria-pressed or vjk.
+    // Indeed sometimes leaves a populated pane without aria-pressed, while
+    // vjk may still identify the previously selected job. Correlate the pane
+    // title even when URL detection supplied an ID so a unique primary card
+    // can override that stale identity.
     // Correlate it only when exactly one primary card has the same normalized
     // title; duplicate-title ambiguity must not invent an identity.
-    if (!anchor && primaryCards.length && !detection.externalJobId) {
+    if (!anchor && primaryCards.length) {
       const normalizedDetailTitle = normalizeIndeedTitle(detailTitle);
       if (normalizedDetailTitle) {
         const matches = primaryCards.flatMap((card) => {
@@ -789,7 +792,10 @@ export async function extractJobDraft(detection: {
         if (matches.length === 1) anchor = matches[0];
       }
     }
-    if (!anchor) return Boolean(detection.externalJobId);
+    // A URL-derived vjk is not proof that an attached/hidden pane represents
+    // the same job. Only a pressed or uniquely title-correlated card verifies
+    // pane identity.
+    if (!anchor) return false;
 
     const rawHref = anchor.getAttribute('href') ?? undefined;
     const jkFromHref = (): string | undefined => {
@@ -867,7 +873,7 @@ export async function extractJobDraft(detection: {
       'dom',
       'medium',
     );
-    return true;
+    return Boolean(jk);
   }
 
   async function extractIndeedDom(): Promise<void> {

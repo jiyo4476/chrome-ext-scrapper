@@ -1974,13 +1974,16 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
     expect(draft.external_job_id).not.toBe('shelf-999');
   });
 
-  it('correlates an unmarked primary card by one unique normalized pane title', async () => {
+  it('lets a uniquely title-correlated unmarked card override a stale vjk identity', async () => {
     loadFixture(
       indeedSplitViewFixture.replace(' aria-pressed="true"', ''),
-      'https://www.indeed.com/jobs?q=engineer',
+      'https://www.indeed.com/jobs?q=engineer&vjk=stale-999',
     );
 
-    const { draft } = await extractJobDraft(INDEED);
+    const { draft } = await extractJobDraft({
+      ...INDEED,
+      externalJobId: 'stale-999',
+    });
 
     expect(draft.external_job_id).toBe('selected-123');
     expect(draft.job_link).toBe(
@@ -2018,7 +2021,7 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
     expect(draft.external_job_id).not.toBe('shelf-999');
   });
 
-  it('does not accept stale detail text from a hidden pane without trusted identity', async () => {
+  it('rejects hidden stale pane text when vjk has no verified card match', async () => {
     loadFixture(
       indeedSplitViewFixture
         .replace(' aria-pressed="true"', '')
@@ -2034,12 +2037,15 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
           'Staff Engineer - job post',
           'Unrelated Engineer - job post',
         ),
-      'https://www.indeed.com/jobs?q=engineer',
+      'https://www.indeed.com/jobs?q=engineer&vjk=stale-999',
     );
 
-    const { draft } = await extractJobDraft(INDEED);
+    const { draft } = await extractJobDraft({
+      ...INDEED,
+      externalJobId: 'stale-999',
+    });
 
-    expect(draft.external_job_id).toBeUndefined();
+    expect(draft.external_job_id).toBe('stale-999');
     expect(draft.job_description).not.toBe('Lead the platform team.');
   });
 
