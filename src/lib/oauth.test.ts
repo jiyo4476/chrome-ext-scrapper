@@ -28,7 +28,6 @@ const baseSettings: ExtensionSettings = {
   oauthAccessToken: '',
   oauthRefreshToken: '',
   oauthExpiresAt: 0,
-  apiKey: '',
   autoDetect: false,
 };
 

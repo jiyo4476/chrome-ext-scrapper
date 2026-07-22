@@ -361,7 +361,6 @@ describe('background save flow', () => {
         oauthAccessToken: 'oauth-token',
         oauthRefreshToken: '',
         oauthExpiresAt: Date.now() + 300_000,
-        apiKey: '',
         autoDetect: false,
       },
     });
