@@ -4,6 +4,7 @@ import builtInFixture from '../../../fixtures/html/builtin-colorado-basic.html?r
 import builtInRemoteFixture from '../../../fixtures/html/builtin-colorado-remote.html?raw';
 import diceFixture from '../../../fixtures/html/dice-basic.html?raw';
 import greenhouseFixture from '../../../fixtures/html/greenhouse-ats-basic.html?raw';
+import indeedSplitViewFixture from '../../../fixtures/html/indeed-split-view.html?raw';
 import leverFixture from '../../../fixtures/html/lever-basic.html?raw';
 import wellfoundFixture from '../../../fixtures/html/wellfound-basic.html?raw';
 import workdayFixture from '../../../fixtures/html/workday-basic.html?raw';
@@ -1946,6 +1947,148 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
     expect(draft.job_location).toBe('Austin, TX');
     expect(draft.salary_text).toBe('$150,000 - $180,000 a year');
     expect(draft.job_type).toBe('full_time');
+  });
+
+  it('loads the split-view fixture and keeps primary-card fields synchronized with the right pane', async () => {
+    loadFixture(
+      indeedSplitViewFixture,
+      'https://www.indeed.com/jobs?q=engineer&vjk=stale-999',
+    );
+
+    const { draft } = await extractJobDraft({
+      ...INDEED,
+      externalJobId: 'stale-999',
+    });
+
+    expect(draft).toMatchObject({
+      external_job_id: 'selected-123',
+      job_link: 'https://www.indeed.com/viewjob?jk=selected-123',
+      job_title: 'Staff Engineer',
+      company_name: 'Acme Corp',
+      job_location: 'Hybrid work in Austin, TX',
+      salary_text: '$150,000 - $180,000 a year',
+      job_type: 'full_time',
+      is_remote: false,
+      job_description: 'Lead the platform team.',
+    });
+    expect(draft.external_job_id).not.toBe('shelf-999');
+  });
+
+  it('lets a uniquely title-correlated unmarked card override a stale vjk identity', async () => {
+    loadFixture(
+      indeedSplitViewFixture.replace(' aria-pressed="true"', ''),
+      'https://www.indeed.com/jobs?q=engineer&vjk=stale-999',
+    );
+
+    const { draft } = await extractJobDraft({
+      ...INDEED,
+      externalJobId: 'stale-999',
+    });
+
+    expect(draft.external_job_id).toBe('selected-123');
+    expect(draft.job_link).toBe(
+      'https://www.indeed.com/viewjob?jk=selected-123',
+    );
+    expect(draft.job_description).toBe('Lead the platform team.');
+  });
+
+  it('rejects duplicate-title correlation when no card is marked selected', async () => {
+    loadFixture(
+      indeedSplitViewFixture
+        .replace(' aria-pressed="true"', '')
+        .replace('full details of Other Job', 'full details of Staff Engineer')
+        .replace('>Other Job</a', '>Staff Engineer</a'),
+      'https://www.indeed.com/jobs?q=engineer',
+    );
+
+    const { draft } = await extractJobDraft(INDEED);
+
+    expect(draft.external_job_id).toBeUndefined();
+  });
+
+  it('does not select a pressed shelf card outside the primary results boundary', async () => {
+    loadFixture(
+      indeedSplitViewFixture.replace(
+        'data-jk="selected-123"\n              aria-pressed="true"',
+        'data-jk="selected-123"',
+      ),
+      'https://www.indeed.com/jobs?q=engineer',
+    );
+
+    const { draft } = await extractJobDraft(INDEED);
+
+    expect(draft.external_job_id).toBe('selected-123');
+    expect(draft.external_job_id).not.toBe('shelf-999');
+  });
+
+  it('finds primary cards under an alternate results container and marker class', async () => {
+    loadFixture(
+      indeedSplitViewFixture
+        .replace('id="mosaic-jobResults"', 'id="mosaic-provider-jobcards"')
+        .replaceAll('class="job_seen_beacon"', 'data-testid="slider_item"'),
+      'https://www.indeed.com/jobs?q=engineer&vjk=stale-999',
+    );
+
+    const { draft } = await extractJobDraft({
+      ...INDEED,
+      externalJobId: 'stale-999',
+    });
+
+    expect(draft.external_job_id).toBe('selected-123');
+    expect(draft.job_title).toBe('Staff Engineer');
+    expect(draft.company_name).toBe('Acme Corp');
+  });
+
+  it('rejects visible stale pane text when a search result has no verified card match', async () => {
+    loadFixture(
+      indeedSplitViewFixture
+        .replace(' aria-pressed="true"', '')
+        .replace(
+          '<meta name="description" content="Lead the platform team." />',
+          '',
+        )
+        .replaceAll(
+          'Staff Engineer - job post',
+          'Unrelated Engineer - job post',
+        ),
+      'https://www.indeed.com/jobs?q=engineer&vjk=stale-999',
+    );
+
+    const { draft } = await extractJobDraft({
+      ...INDEED,
+      externalJobId: 'stale-999',
+    });
+
+    expect(draft.external_job_id).toBe('stale-999');
+    expect(draft.job_description).not.toBe('Lead the platform team.');
+  });
+
+  it('rejects hidden stale pane text when vjk has no verified card match', async () => {
+    loadFixture(
+      indeedSplitViewFixture
+        .replace(' aria-pressed="true"', '')
+        .replace(
+          '<meta name="description" content="Lead the platform team." />',
+          '',
+        )
+        .replace(
+          '<section class="jobsearch-RightPane">',
+          '<section class="jobsearch-RightPane" style="display: none">',
+        )
+        .replaceAll(
+          'Staff Engineer - job post',
+          'Unrelated Engineer - job post',
+        ),
+      'https://www.indeed.com/jobs?q=engineer&vjk=stale-999',
+    );
+
+    const { draft } = await extractJobDraft({
+      ...INDEED,
+      externalJobId: 'stale-999',
+    });
+
+    expect(draft.external_job_id).toBe('stale-999');
+    expect(draft.job_description).not.toBe('Lead the platform team.');
   });
 
   it('derives is_remote from the workplace-type prefix in the card location', async () => {

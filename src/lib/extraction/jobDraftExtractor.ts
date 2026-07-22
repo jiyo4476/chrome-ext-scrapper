@@ -338,8 +338,11 @@ export async function extractJobDraft(detection: {
     return text || undefined;
   }
 
-  function bySelector(selectors: string[]): () => Element | undefined {
-    return () => queryFirst(selectors) ?? undefined;
+  function bySelector(
+    selectors: string[],
+    root: ParentNode = document,
+  ): () => Element | undefined {
+    return () => queryFirst(selectors, root) ?? undefined;
   }
 
   // Waits on several independent element finders at once via a single
@@ -736,13 +739,100 @@ export async function extractJobDraft(detection: {
   // click, so the card's data-jk outranks the URL-derived job ID. The
   // pressed marker sits on the title link itself in current markup; the
   // wrapper-level and href-only selectors below cover markup variants.
-  function extractIndeedSelectedCard(): void {
-    const anchor = queryFirst([
+  // Every Indeed title -- card aria-label, card text, and pane heading --
+  // goes through this one cleaner so the string used to correlate a card with
+  // the pane and the string stored on the draft can never drift apart.
+  function cleanIndeedTitle(value: string | undefined): string | undefined {
+    const cleaned = value
+      ?.replace(/^full details of\s+/i, '')
+      .replace(/\s+-\s+job post$/i, '')
+      .trim();
+    return cleaned || undefined;
+  }
+
+  function normalizeIndeedTitle(value: string | undefined): string | undefined {
+    return cleanIndeedTitle(value)?.toLocaleLowerCase();
+  }
+
+  // Indeed renames its results wrapper and card marker class from time to
+  // time, and recommendation shelves reuse the same card markup outside the
+  // primary list. Keeping the container and marker candidates in these two
+  // lists means a markup change is one edit here, while the primary/shelf
+  // separation still comes from requiring cards to sit inside a primary
+  // results container.
+  const INDEED_PRIMARY_RESULT_CONTAINERS = [
+    '#mosaic-jobResults',
+    '#mosaic-provider-jobcards',
+    '[data-testid="jobResults"]',
+  ];
+  const INDEED_PRIMARY_CARD_MARKERS = [
+    'div.job_seen_beacon',
+    'li.job_seen_beacon',
+    '[data-testid="slider_item"]',
+    'li[data-resultid]',
+  ];
+
+  function findIndeedPrimaryCards(): Element[] {
+    const container = queryFirst(INDEED_PRIMARY_RESULT_CONTAINERS);
+    if (!container) return [];
+    const cards = INDEED_PRIMARY_CARD_MARKERS.flatMap((marker) =>
+      Array.from(container.querySelectorAll(marker)),
+    );
+    // A card can match several markers, and one marker can sit inside
+    // another; keep each card once, outermost wins.
+    return cards.filter(
+      (card, index) =>
+        cards.indexOf(card) === index &&
+        !cards.some((other) => other !== card && other.contains(card)),
+    );
+  }
+
+  function extractIndeedSelectedCard(detailTitle: string | undefined): boolean {
+    const primaryCards = findIndeedPrimaryCards();
+    const searchRoots: Element[] = primaryCards.length
+      ? primaryCards
+      : [document.documentElement];
+    const selectedSelectors = [
       'a[data-jk][aria-pressed="true"]',
       '[aria-pressed="true"] a[data-jk]',
       'a[aria-pressed="true"][href*="jk="]',
-    ]);
-    if (!anchor) return;
+    ];
+    let anchor = searchRoots
+      .map((root) => queryFirst(selectedSelectors, root))
+      .find((candidate) => candidate !== null);
+
+    // Indeed sometimes leaves a populated pane without aria-pressed, while
+    // vjk may still identify the previously selected job. Correlate the pane
+    // title even when URL detection supplied an ID so a unique primary card
+    // can override that stale identity.
+    // Correlate it only when exactly one primary card has the same normalized
+    // title; duplicate-title ambiguity must not invent an identity.
+    if (!anchor && primaryCards.length) {
+      const normalizedDetailTitle = normalizeIndeedTitle(detailTitle);
+      if (normalizedDetailTitle) {
+        const matches = primaryCards.flatMap((card) => {
+          const candidate = queryFirst(
+            [
+              'a[data-jk][aria-label^="full details of" i]',
+              'a[data-jk]',
+              'a[href*="jk="]',
+            ],
+            card,
+          );
+          const candidateTitle = normalizeIndeedTitle(
+            candidate?.getAttribute('aria-label') ?? textOf(candidate),
+          );
+          return candidate && candidateTitle === normalizedDetailTitle
+            ? [candidate]
+            : [];
+        });
+        if (matches.length === 1) anchor = matches[0];
+      }
+    }
+    // A URL-derived vjk is not proof that an attached/hidden pane represents
+    // the same job. Only a pressed or uniquely title-correlated card verifies
+    // pane identity.
+    if (!anchor) return false;
 
     const rawHref = anchor.getAttribute('href') ?? undefined;
     const jkFromHref = (): string | undefined => {
@@ -772,8 +862,13 @@ export async function extractJobDraft(detection: {
     // which matters for job_title -- the pane block's bare-h1 fallback can
     // land on the serp's own search header (e.g. "engineer jobs in Austin"),
     // while the card title is the selected posting's title verbatim.
-    const card = anchor.closest('li') ?? anchor;
-    addCandidate('job_title', textOf(anchor), 'dom', 'high');
+    const card =
+      anchor.closest([...INDEED_PRIMARY_CARD_MARKERS, 'li'].join(', ')) ??
+      anchor;
+    const cardTitle = cleanIndeedTitle(
+      anchor.getAttribute('aria-label') ?? textOf(anchor),
+    );
+    addCandidate('job_title', cardTitle, 'dom', 'high');
     addCandidate(
       'company_name',
       textOf(card.querySelector('[data-testid="company-name"]')),
@@ -817,58 +912,89 @@ export async function extractJobDraft(detection: {
       'dom',
       'medium',
     );
+    return Boolean(jk);
   }
 
   async function extractIndeedDom(): Promise<void> {
-    extractIndeedSelectedCard();
-
     // Wait on title and description together -- the header commonly paints
     // before #jobDescriptionText, which Indeed often populates via a
     // follow-up XHR. Waiting on title alone would return as soon as it
     // resolves and silently miss a still-loading description.
+    const rightPane = document.querySelector('.jobsearch-RightPane');
+    const paneRoot = rightPane ?? document.documentElement;
     const [titleEl, descriptionEl] = await waitForEach(
       [
-        bySelector([
-          'h1.jobsearch-JobInfoHeader-title',
-          '[data-testid="jobsearch-JobInfoHeader-title"]',
-          'h1',
-        ]),
-        bySelector([
-          '#jobDescriptionText',
-          '[data-testid="jobDescriptionText"]',
-        ]),
+        bySelector(
+          [
+            'h1.jobsearch-JobInfoHeader-title',
+            '[data-testid="jobsearch-JobInfoHeader-title"]',
+            'h1',
+          ],
+          paneRoot,
+        ),
+        bySelector(
+          ['#jobDescriptionText', '[data-testid="jobDescriptionText"]'],
+          paneRoot,
+        ),
       ],
       800,
     );
-    addCandidate('job_title', textOf(titleEl), 'dom', 'high');
+    const detailTitle = textOf(titleEl);
+    const hasTrustedIdentity = extractIndeedSelectedCard(detailTitle);
+    const hiddenPane =
+      rightPane !== null && getComputedStyle(rightPane).display === 'none';
+    const isSearchResultsPage =
+      queryFirst(INDEED_PRIMARY_RESULT_CONTAINERS) !== null ||
+      location.pathname === '/jobs' ||
+      /-jobs\.html$/i.test(location.pathname);
+    const acceptPane =
+      hasTrustedIdentity || (!isSearchResultsPage && !hiddenPane);
+    addCandidate(
+      'job_title',
+      acceptPane ? cleanIndeedTitle(detailTitle) : undefined,
+      'dom',
+      'high',
+    );
     addCandidate(
       'job_description',
-      descriptionEl ? elementToSafeMarkdown(descriptionEl) : undefined,
+      acceptPane && descriptionEl
+        ? elementToSafeMarkdown(descriptionEl)
+        : undefined,
       'dom',
       'high',
     );
 
     addCandidate(
       'company_name',
-      textOf(
-        queryFirst([
-          '[data-testid="inlineHeader-companyName"]',
-          '.jobsearch-InlineCompanyRating-companyHeader a',
-          '.jobsearch-CompanyInfoContainer a',
-        ]),
-      ),
+      acceptPane
+        ? textOf(
+            queryFirst(
+              [
+                '[data-testid="inlineHeader-companyName"]',
+                '.jobsearch-InlineCompanyRating-companyHeader a',
+                '.jobsearch-CompanyInfoContainer a',
+              ],
+              paneRoot,
+            ),
+          )
+        : undefined,
       'dom',
       'high',
     );
 
     addCandidate(
       'job_location',
-      textOf(
-        queryFirst([
-          '[data-testid="inlineHeader-companyLocation"]',
-          '.jobsearch-JobInfoHeader-subtitle > div',
-        ]),
-      ),
+      acceptPane
+        ? textOf(
+            queryFirst(
+              [
+                '[data-testid="inlineHeader-companyLocation"]',
+                '.jobsearch-JobInfoHeader-subtitle > div',
+              ],
+              paneRoot,
+            ),
+          )
+        : undefined,
       'dom',
       'medium',
     );
@@ -2360,12 +2486,20 @@ export async function extractJobDraft(detection: {
 
   const titleForId =
     document.title || document.querySelector('h1')?.textContent || undefined;
-  addCandidate(
-    'external_job_id',
-    detection.externalJobId ?? inferExternalId(href, titleForId),
-    'url',
-    'medium',
-  );
+  const inferredExternalId = (() => {
+    if (detection.externalJobId) return detection.externalJobId;
+    const activeUrl = new URL(href);
+    if (
+      detection.platform === 'indeed' &&
+      activeUrl.pathname !== '/viewjob' &&
+      !activeUrl.searchParams.get('jk') &&
+      !activeUrl.searchParams.get('vjk')
+    ) {
+      return undefined;
+    }
+    return inferExternalId(href, titleForId);
+  })();
+  addCandidate('external_job_id', inferredExternalId, 'url', 'medium');
 
   // --- platform-specific dom source -----------------------------------------
   // A single dispatch table instead of a hand-written if/else chain -- adding
