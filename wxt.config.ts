@@ -1,12 +1,21 @@
 import { defineConfig } from 'wxt';
 
+import {
+  DEFAULT_JOB_TRACKER_API_ENDPOINT,
+  DEFAULT_OAUTH2_ENDPOINT,
+  resolveServiceEndpoint,
+} from './src/lib/serviceEndpoints';
+
 export default defineConfig({
   manifest: () => {
-    const apiEndpoint =
-      import.meta.env.WXT_JOB_TRACKER_API_ENDPOINT?.trim() ||
-      'http://jobtracker.local';
-    const oauth2Endpoint =
-      import.meta.env.WXT_OAUTH2_ENDPOINT?.trim() || 'https://auth.yjimmy.dev';
+    const apiEndpoint = resolveServiceEndpoint(
+      import.meta.env.WXT_JOB_TRACKER_API_ENDPOINT,
+      DEFAULT_JOB_TRACKER_API_ENDPOINT,
+    );
+    const oauth2Endpoint = resolveServiceEndpoint(
+      import.meta.env.WXT_OAUTH2_ENDPOINT,
+      DEFAULT_OAUTH2_ENDPOINT,
+    );
 
     return {
       name: 'Job Tracker Capture',

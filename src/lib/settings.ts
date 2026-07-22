@@ -1,13 +1,19 @@
 import { browser } from 'wxt/browser';
 import { z } from 'zod';
 
-export const DEFAULT_API_BASE_URL = resolveEndpoint(
+import {
+  DEFAULT_JOB_TRACKER_API_ENDPOINT,
+  DEFAULT_OAUTH2_ENDPOINT,
+  resolveServiceEndpoint,
+} from './serviceEndpoints';
+
+export const DEFAULT_API_BASE_URL = resolveServiceEndpoint(
   import.meta.env.WXT_JOB_TRACKER_API_ENDPOINT,
-  'http://jobtracker.local',
+  DEFAULT_JOB_TRACKER_API_ENDPOINT,
 );
-export const DEFAULT_AUTHENTIK_BASE_URL = resolveEndpoint(
+export const DEFAULT_AUTHENTIK_BASE_URL = resolveServiceEndpoint(
   import.meta.env.WXT_OAUTH2_ENDPOINT,
-  'https://auth.yjimmy.dev',
+  DEFAULT_OAUTH2_ENDPOINT,
 );
 export const DEFAULT_OAUTH_CLIENT_ID = 'job-tracker-extension';
 export const DEFAULT_OAUTH_SCOPE = 'openid profile email';
@@ -43,10 +49,6 @@ export type PublicSettings = z.infer<typeof publicSettingsSchema>;
 export type PublicSettingsUpdate = z.infer<typeof publicSettingsUpdateSchema>;
 
 const STORAGE_KEY = 'jobTracker.settings';
-
-function resolveEndpoint(value: string | undefined, fallback: string): string {
-  return (value?.trim() || fallback).replace(/\/+$/, '');
-}
 
 export async function getSettings(): Promise<ExtensionSettings> {
   const result = await browser.storage.local.get(STORAGE_KEY);
