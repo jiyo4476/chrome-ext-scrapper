@@ -2039,6 +2039,30 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
     expect(draft.company_name).toBe('Acme Corp');
   });
 
+  it('rejects visible stale pane text when a search result has no verified card match', async () => {
+    loadFixture(
+      indeedSplitViewFixture
+        .replace(' aria-pressed="true"', '')
+        .replace(
+          '<meta name="description" content="Lead the platform team." />',
+          '',
+        )
+        .replaceAll(
+          'Staff Engineer - job post',
+          'Unrelated Engineer - job post',
+        ),
+      'https://www.indeed.com/jobs?q=engineer&vjk=stale-999',
+    );
+
+    const { draft } = await extractJobDraft({
+      ...INDEED,
+      externalJobId: 'stale-999',
+    });
+
+    expect(draft.external_job_id).toBe('stale-999');
+    expect(draft.job_description).not.toBe('Lead the platform team.');
+  });
+
   it('rejects hidden stale pane text when vjk has no verified card match', async () => {
     loadFixture(
       indeedSplitViewFixture

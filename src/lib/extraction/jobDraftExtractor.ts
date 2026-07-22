@@ -943,7 +943,12 @@ export async function extractJobDraft(detection: {
     const hasTrustedIdentity = extractIndeedSelectedCard(detailTitle);
     const hiddenPane =
       rightPane !== null && getComputedStyle(rightPane).display === 'none';
-    const acceptPane = !hiddenPane || hasTrustedIdentity;
+    const isSearchResultsPage =
+      queryFirst(INDEED_PRIMARY_RESULT_CONTAINERS) !== null ||
+      location.pathname === '/jobs' ||
+      /-jobs\.html$/i.test(location.pathname);
+    const acceptPane =
+      hasTrustedIdentity || (!isSearchResultsPage && !hiddenPane);
     addCandidate(
       'job_title',
       acceptPane ? cleanIndeedTitle(detailTitle) : undefined,
