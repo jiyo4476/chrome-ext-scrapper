@@ -140,6 +140,9 @@ dist
 # obsidian
 .obsidian/
 
+# codex
+.codex/
+
 # claude
 .claude/
 .agents/
