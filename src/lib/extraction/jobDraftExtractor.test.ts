@@ -2021,6 +2021,24 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
     expect(draft.external_job_id).not.toBe('shelf-999');
   });
 
+  it('finds primary cards under an alternate results container and marker class', async () => {
+    loadFixture(
+      indeedSplitViewFixture
+        .replace('id="mosaic-jobResults"', 'id="mosaic-provider-jobcards"')
+        .replaceAll('class="job_seen_beacon"', 'data-testid="slider_item"'),
+      'https://www.indeed.com/jobs?q=engineer&vjk=stale-999',
+    );
+
+    const { draft } = await extractJobDraft({
+      ...INDEED,
+      externalJobId: 'stale-999',
+    });
+
+    expect(draft.external_job_id).toBe('selected-123');
+    expect(draft.job_title).toBe('Staff Engineer');
+    expect(draft.company_name).toBe('Acme Corp');
+  });
+
   it('rejects hidden stale pane text when vjk has no verified card match', async () => {
     loadFixture(
       indeedSplitViewFixture

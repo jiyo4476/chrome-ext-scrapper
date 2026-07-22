@@ -739,19 +739,56 @@ export async function extractJobDraft(detection: {
   // click, so the card's data-jk outranks the URL-derived job ID. The
   // pressed marker sits on the title link itself in current markup; the
   // wrapper-level and href-only selectors below cover markup variants.
-  function normalizeIndeedTitle(value: string | undefined): string | undefined {
-    const normalized = value
+  // Every Indeed title -- card aria-label, card text, and pane heading --
+  // goes through this one cleaner so the string used to correlate a card with
+  // the pane and the string stored on the draft can never drift apart.
+  function cleanIndeedTitle(value: string | undefined): string | undefined {
+    const cleaned = value
       ?.replace(/^full details of\s+/i, '')
       .replace(/\s+-\s+job post$/i, '')
-      .trim()
-      .toLocaleLowerCase();
-    return normalized || undefined;
+      .trim();
+    return cleaned || undefined;
+  }
+
+  function normalizeIndeedTitle(value: string | undefined): string | undefined {
+    return cleanIndeedTitle(value)?.toLocaleLowerCase();
+  }
+
+  // Indeed renames its results wrapper and card marker class from time to
+  // time, and recommendation shelves reuse the same card markup outside the
+  // primary list. Keeping the container and marker candidates in these two
+  // lists means a markup change is one edit here, while the primary/shelf
+  // separation still comes from requiring cards to sit inside a primary
+  // results container.
+  const INDEED_PRIMARY_RESULT_CONTAINERS = [
+    '#mosaic-jobResults',
+    '#mosaic-provider-jobcards',
+    '[data-testid="jobResults"]',
+  ];
+  const INDEED_PRIMARY_CARD_MARKERS = [
+    'div.job_seen_beacon',
+    'li.job_seen_beacon',
+    '[data-testid="slider_item"]',
+    'li[data-resultid]',
+  ];
+
+  function findIndeedPrimaryCards(): Element[] {
+    const container = queryFirst(INDEED_PRIMARY_RESULT_CONTAINERS);
+    if (!container) return [];
+    const cards = INDEED_PRIMARY_CARD_MARKERS.flatMap((marker) =>
+      Array.from(container.querySelectorAll(marker)),
+    );
+    // A card can match several markers, and one marker can sit inside
+    // another; keep each card once, outermost wins.
+    return cards.filter(
+      (card, index) =>
+        cards.indexOf(card) === index &&
+        !cards.some((other) => other !== card && other.contains(card)),
+    );
   }
 
   function extractIndeedSelectedCard(detailTitle: string | undefined): boolean {
-    const primaryCards = Array.from(
-      document.querySelectorAll('#mosaic-jobResults div.job_seen_beacon'),
-    );
+    const primaryCards = findIndeedPrimaryCards();
     const searchRoots: Element[] = primaryCards.length
       ? primaryCards
       : [document.documentElement];
@@ -825,10 +862,12 @@ export async function extractJobDraft(detection: {
     // which matters for job_title -- the pane block's bare-h1 fallback can
     // land on the serp's own search header (e.g. "engineer jobs in Austin"),
     // while the card title is the selected posting's title verbatim.
-    const card = anchor.closest('div.job_seen_beacon, li') ?? anchor;
-    const cardTitle =
-      anchor.getAttribute('aria-label')?.replace(/^full details of\s+/i, '') ??
-      textOf(anchor);
+    const card =
+      anchor.closest([...INDEED_PRIMARY_CARD_MARKERS, 'li'].join(', ')) ??
+      anchor;
+    const cardTitle = cleanIndeedTitle(
+      anchor.getAttribute('aria-label') ?? textOf(anchor),
+    );
     addCandidate('job_title', cardTitle, 'dom', 'high');
     addCandidate(
       'company_name',
@@ -907,7 +946,7 @@ export async function extractJobDraft(detection: {
     const acceptPane = !hiddenPane || hasTrustedIdentity;
     addCandidate(
       'job_title',
-      acceptPane ? detailTitle?.replace(/\s+-\s+job post$/i, '') : undefined,
+      acceptPane ? cleanIndeedTitle(detailTitle) : undefined,
       'dom',
       'high',
     );
