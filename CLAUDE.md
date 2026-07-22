@@ -33,13 +33,18 @@ npm run zip
 
 `npm run quality` runs Prettier check, ESLint, TypeScript compile, Vitest, and WXT build.
 
+Copy `.env.example` to `.env.local` when an environment needs different service
+hosts. `WXT_JOB_TRACKER_API_ENDPOINT` configures the Job Tracker API base URL and
+`WXT_OAUTH2_ENDPOINT` configures the OAuth2 provider base URL. Both values are
+public build-time configuration and require an extension rebuild after changes.
+
 ---
 
 ## The API Contract
 
 Documented in the workspace vault at `../.obsidian/App/API Reference.md`; implemented at `../job-tracker-nextjs/src/app/api/scrape/route.ts` with the Zod schema in `../job-tracker-nextjs/src/lib/schemas.ts`.
 
-- **Endpoint:** `POST /api/scrape` on the Next.js app (default `http://localhost:3000`), header `Authorization: Bearer <OAuth2 access token>`.
+- **Endpoint:** `POST /api/scrape` on the Next.js app (default `http://jobtracker.local`), header `Authorization: Bearer <OAuth2 access token>`.
 - **Required fields:** `source_platform` (enum: `linkedin|indeed|glassdoor|dice|lever|greenhouse|workday|angellist|direct|other|google`), `external_job_id`, `company_name`, `job_title`, `job_link` (URL).
 - **Response:** always `{ action: 'created' | 'updated' | 'duplicate_skipped', job_id }`. Use `job_id` to render an "Open in Job Tracker" link to `{BASE_URL}/jobs/{job_id}`.
 - **Auth probe:** `GET /api/health/auth` returns `{ ok: true }` when the Authentik-issued bearer token is accepted and `401 { error: 'Unauthorized' }` when rejected.

@@ -1,8 +1,20 @@
 import { browser } from 'wxt/browser';
 import { z } from 'zod';
 
-export const DEFAULT_API_BASE_URL = 'http://localhost:3000';
-export const DEFAULT_AUTHENTIK_BASE_URL = 'https://auth.yjimmy.dev';
+import {
+  DEFAULT_JOB_TRACKER_API_ENDPOINT,
+  DEFAULT_OAUTH2_ENDPOINT,
+  resolveServiceEndpoint,
+} from './serviceEndpoints';
+
+export const DEFAULT_API_BASE_URL = resolveServiceEndpoint(
+  import.meta.env.WXT_JOB_TRACKER_API_ENDPOINT,
+  DEFAULT_JOB_TRACKER_API_ENDPOINT,
+);
+export const DEFAULT_AUTHENTIK_BASE_URL = resolveServiceEndpoint(
+  import.meta.env.WXT_OAUTH2_ENDPOINT,
+  DEFAULT_OAUTH2_ENDPOINT,
+);
 export const DEFAULT_OAUTH_CLIENT_ID = 'job-tracker-extension';
 export const DEFAULT_OAUTH_SCOPE = 'openid profile email';
 

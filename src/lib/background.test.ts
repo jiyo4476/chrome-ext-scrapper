@@ -141,7 +141,7 @@ describe('background save flow', () => {
     expect(response).toEqual({
       type: 'GET_SETTINGS_RESULT',
       ok: true,
-      settings: { apiBaseUrl: 'http://localhost:3000', autoDetect: true },
+      settings: { apiBaseUrl: 'http://jobtracker.local', autoDetect: true },
     });
     expect(response).not.toHaveProperty('settings.oauthAccessToken');
     expect(response).not.toHaveProperty('settings.oauthRefreshToken');
@@ -354,7 +354,7 @@ describe('background save flow', () => {
   it('checks the authenticated API health endpoint', async () => {
     browserMock.storage.local.get.mockResolvedValue({
       'jobTracker.settings': {
-        apiBaseUrl: 'http://localhost:3000',
+        apiBaseUrl: 'http://jobtracker.local',
         authentikBaseUrl: 'https://auth.yjimmy.dev',
         oauthClientId: 'job-tracker-extension',
         oauthScope: 'openid profile email',
@@ -374,7 +374,7 @@ describe('background save flow', () => {
 
     expect(response).toEqual({ type: 'TEST_CONNECTION_RESULT', ok: true });
     expect(fetch).toHaveBeenCalledWith(
-      'http://localhost:3000/api/health/auth',
+      'http://jobtracker.local/api/health/auth',
       expect.objectContaining({ method: 'GET' }),
     );
   });
