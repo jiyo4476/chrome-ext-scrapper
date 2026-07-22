@@ -43,7 +43,7 @@ describe('extension message contracts', () => {
       extensionMessageSchema.parse({
         type: 'SAVE_SETTINGS',
         settings: {
-          apiBaseUrl: 'http://localhost:3000',
+          apiBaseUrl: 'http://jobtracker.local',
           authentikBaseUrl: 'https://auth.yjimmy.dev',
           oauthClientId: 'job-tracker-extension',
           oauthScope: 'openid profile email',
@@ -64,7 +64,7 @@ describe('extension message contracts', () => {
         type: 'GET_SETTINGS_RESULT',
         ok: true,
         settings: {
-          apiBaseUrl: 'http://localhost:3000',
+          apiBaseUrl: 'http://jobtracker.local',
           autoDetect: false,
           oauthAccessToken: 'secret-access-token',
           oauthRefreshToken: 'secret-refresh-token',
@@ -74,7 +74,7 @@ describe('extension message contracts', () => {
       type: 'GET_SETTINGS_RESULT',
       ok: true,
       settings: {
-        apiBaseUrl: 'http://localhost:3000',
+        apiBaseUrl: 'http://jobtracker.local',
         autoDetect: false,
       },
     });

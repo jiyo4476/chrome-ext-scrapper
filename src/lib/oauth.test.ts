@@ -21,7 +21,7 @@ import { getValidAccessToken, signInWithAuthentik } from './oauth';
 import type { ExtensionSettings } from './settings';
 
 const baseSettings: ExtensionSettings = {
-  apiBaseUrl: 'http://localhost:3000',
+  apiBaseUrl: 'http://jobtracker.local',
   authentikBaseUrl: 'https://auth.example.com',
   oauthClientId: 'job-tracker-extension',
   oauthScope: 'openid profile email',

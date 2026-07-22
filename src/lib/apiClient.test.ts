@@ -29,7 +29,7 @@ describe('postScrapePayload', () => {
     await expect(
       postScrapePayload(
         {
-          apiBaseUrl: 'http://localhost:3000/',
+          apiBaseUrl: 'http://jobtracker.local/',
           authentikBaseUrl: 'https://auth.yjimmy.dev',
           oauthClientId: 'job-tracker-extension',
           oauthScope: 'openid profile email',
@@ -43,15 +43,18 @@ describe('postScrapePayload', () => {
       ),
     ).resolves.toEqual({ action: 'created', job_id: 'job-1' });
 
-    expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/api/scrape', {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer oauth-token',
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://jobtracker.local/api/scrape',
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer oauth-token',
+        },
+        body: JSON.stringify(payload),
       },
-      body: JSON.stringify(payload),
-    });
+    );
   });
 
   it('maps auth failures to a structured client error', async () => {
@@ -63,7 +66,7 @@ describe('postScrapePayload', () => {
     await expect(
       postScrapePayload(
         {
-          apiBaseUrl: 'http://localhost:3000',
+          apiBaseUrl: 'http://jobtracker.local',
           authentikBaseUrl: 'https://auth.yjimmy.dev',
           oauthClientId: 'job-tracker-extension',
           oauthScope: 'openid profile email',
@@ -96,7 +99,7 @@ describe('postScrapePayload', () => {
     await expect(
       postScrapePayload(
         {
-          apiBaseUrl: 'http://localhost:3000',
+          apiBaseUrl: 'http://jobtracker.local',
           authentikBaseUrl: 'https://auth.yjimmy.dev',
           oauthClientId: 'job-tracker-extension',
           oauthScope: 'openid profile email',
@@ -133,7 +136,7 @@ describe('testAuthConnection', () => {
 
     await expect(
       testAuthConnection({
-        apiBaseUrl: 'http://localhost:3000/',
+        apiBaseUrl: 'http://jobtracker.local/',
         authentikBaseUrl: 'https://auth.yjimmy.dev',
         oauthClientId: 'job-tracker-extension',
         oauthScope: 'openid profile email',
@@ -146,7 +149,7 @@ describe('testAuthConnection', () => {
     ).resolves.toBeUndefined();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:3000/api/health/auth',
+      'http://jobtracker.local/api/health/auth',
       {
         method: 'GET',
         headers: {
