@@ -26,7 +26,6 @@ export const extensionSettingsSchema = z.object({
   oauthAccessToken: z.string().default(''),
   oauthRefreshToken: z.string().default(''),
   oauthExpiresAt: z.number().default(0),
-  apiKey: z.string().default(''),
   autoDetect: z.boolean().default(true),
 });
 
@@ -75,7 +74,6 @@ function lockProtectedSettings(settings: ExtensionSettings): ExtensionSettings {
     authentikBaseUrl: DEFAULT_AUTHENTIK_BASE_URL,
     oauthClientId: DEFAULT_OAUTH_CLIENT_ID,
     oauthScope: DEFAULT_OAUTH_SCOPE,
-    apiKey: '',
   };
 }
 
@@ -89,9 +87,4 @@ export async function clearOAuthCredentials(): Promise<ExtensionSettings> {
     oauthRefreshToken: '',
     oauthExpiresAt: 0,
   });
-}
-
-export function redactApiKey(value: string): string {
-  if (value.length <= 6) return value ? '***' : '';
-  return `${value.slice(0, 3)}***${value.slice(-3)}`;
 }
