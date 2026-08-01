@@ -30,6 +30,7 @@ const baseSettings: ExtensionSettings = {
   oauthExpiresAt: 0,
   autoDetect: false,
 };
+let storedSettings: ExtensionSettings;
 
 describe('Authentik OAuth helpers', () => {
   beforeEach(() => {
@@ -49,8 +50,18 @@ describe('Authentik OAuth helpers', () => {
         );
       },
     );
-    browserMock.storage.local.get.mockResolvedValue({});
-    browserMock.storage.local.set.mockResolvedValue(undefined);
+    storedSettings = { ...baseSettings };
+    browserMock.storage.local.get.mockImplementation(() =>
+      Promise.resolve({ 'jobTracker.settings': storedSettings }),
+    );
+    browserMock.storage.local.set.mockImplementation((value: unknown) => {
+      const next = (value as Record<string, ExtensionSettings>)[
+        'jobTracker.settings'
+      ];
+      if (!next) throw new Error('Expected settings storage payload.');
+      storedSettings = next;
+      return Promise.resolve();
+    });
     vi.stubGlobal(
       'fetch',
       vi.fn(() =>
@@ -115,12 +126,13 @@ describe('Authentik OAuth helpers', () => {
   });
 
   it('refreshes and persists expired access tokens', async () => {
-    const token = await getValidAccessToken({
+    storedSettings = {
       ...baseSettings,
       oauthAccessToken: 'expired-token',
       oauthRefreshToken: 'refresh-token',
       oauthExpiresAt: Date.now() - 1_000,
-    });
+    };
+    const token = await getValidAccessToken(storedSettings);
 
     const [, tokenRequest] = getFirstFetchCall();
     const body = tokenRequest.body;
@@ -138,20 +150,143 @@ describe('Authentik OAuth helpers', () => {
 
   it('clears stale credentials when refresh fails', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response('{}', { status: 401 }));
+    storedSettings = {
+      ...baseSettings,
+      oauthAccessToken: 'expired-token',
+      oauthRefreshToken: 'stale-refresh-token',
+      oauthExpiresAt: Date.now() - 1,
+    };
 
-    await expect(
-      getValidAccessToken({
-        ...baseSettings,
-        oauthAccessToken: 'expired-token',
-        oauthRefreshToken: 'stale-refresh-token',
-        oauthExpiresAt: Date.now() - 1,
-      }),
-    ).rejects.toThrow('Authentik token exchange failed with HTTP 401.');
+    await expect(getValidAccessToken(storedSettings)).rejects.toThrow(
+      'Authentik token exchange failed with HTTP 401.',
+    );
     expect(getSavedSettings()).toMatchObject({
       oauthAccessToken: '',
       oauthRefreshToken: '',
       oauthExpiresAt: 0,
     });
+  });
+
+  it('shares one rotating-token refresh across concurrent callers', async () => {
+    storedSettings = {
+      ...baseSettings,
+      oauthRefreshToken: 'refresh-token',
+    };
+
+    await expect(
+      Promise.all([
+        getValidAccessToken(storedSettings),
+        getValidAccessToken(storedSettings),
+      ]),
+    ).resolves.toEqual(['access-token', 'access-token']);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(storedSettings.oauthRefreshToken).toBe('refresh-token');
+  });
+
+  it('preserves a settings save while refresh persists rotated credentials', async () => {
+    const { saveSettings } = await import('./settings');
+    storedSettings = {
+      ...baseSettings,
+      oauthRefreshToken: 'refresh-token',
+      autoDetect: false,
+    };
+    let releaseFetch: ((response: Response) => void) | undefined;
+    vi.mocked(fetch).mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          releaseFetch = resolve;
+        }),
+    );
+
+    const refresh = getValidAccessToken(storedSettings);
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+    await saveSettings({ autoDetect: true });
+    releaseFetch?.(
+      new Response(
+        JSON.stringify({
+          access_token: 'rotated-access',
+          refresh_token: 'rotated-refresh',
+          expires_in: 600,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(refresh).resolves.toBe('rotated-access');
+    expect(storedSettings).toMatchObject({
+      autoDetect: true,
+      oauthAccessToken: 'rotated-access',
+      oauthRefreshToken: 'rotated-refresh',
+    });
+  });
+
+  it('does not restore credentials when sign-out wins an in-flight refresh', async () => {
+    const { clearOAuthCredentials } = await import('./settings');
+    storedSettings = {
+      ...baseSettings,
+      oauthRefreshToken: 'refresh-token',
+    };
+    let releaseFetch: ((response: Response) => void) | undefined;
+    vi.mocked(fetch).mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          releaseFetch = resolve;
+        }),
+    );
+
+    const refresh = getValidAccessToken(storedSettings);
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+    await clearOAuthCredentials();
+    releaseFetch?.(
+      new Response(
+        JSON.stringify({
+          access_token: 'late-access',
+          refresh_token: 'late-refresh',
+          expires_in: 600,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(refresh).rejects.toThrow(
+      'OAuth credentials changed while refresh was in progress.',
+    );
+    expect(storedSettings).toMatchObject({
+      oauthAccessToken: '',
+      oauthRefreshToken: '',
+      oauthExpiresAt: 0,
+    });
+  });
+
+  it('aborts a never-resolving token request without clearing credentials', async () => {
+    vi.useFakeTimers();
+    storedSettings = {
+      ...baseSettings,
+      oauthRefreshToken: 'refresh-token',
+    };
+    vi.mocked(fetch).mockImplementation(
+      (_input: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        }),
+    );
+
+    const refresh = getValidAccessToken(storedSettings);
+    const rejection = expect(refresh).rejects.toMatchObject({
+      message: 'Authentik token request timed out. Please try again.',
+      retryable: true,
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    await rejection;
+    expect(storedSettings.oauthRefreshToken).toBe('refresh-token');
+    vi.useRealTimers();
   });
 
   it('rejects sign-in callbacks with a mismatched state', async () => {

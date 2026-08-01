@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { type SaveJobResult, saveJobResultSchema } from './messages';
 import type { ScrapePayload } from './schemas';
 import type { ExtensionSettings } from './settings';
+import { createRequestDeadline, isAbortError } from './requestDeadline';
 
 const MAX_API_RESPONSE_BYTES = 1_000_000;
 
@@ -11,6 +12,7 @@ export class ApiClientError extends Error {
       | 'API_UNCONFIGURED'
       | 'API_AUTH_FAILED'
       | 'API_VALIDATION_FAILED'
+      | 'API_TIMEOUT'
       | 'API_NETWORK_FAILED'
       | 'API_UNEXPECTED_RESPONSE',
     message: string,
@@ -27,76 +29,91 @@ export async function postScrapePayload(
 ): Promise<SaveJobResult> {
   const apiBaseUrl = getApiBaseUrl(settings);
 
-  const response = await fetch(`${apiBaseUrl}/api/scrape`, {
-    method: 'POST',
-    headers: buildHeaders(settings),
-    body: JSON.stringify(payload),
-  }).catch((error: unknown) => {
-    throw new ApiClientError(
-      'API_NETWORK_FAILED',
-      'Could not reach the Job Tracker API.',
-      stringifyUnknown(error),
-    );
-  });
+  const deadline = createRequestDeadline();
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/scrape`, {
+      method: 'POST',
+      headers: buildHeaders(settings),
+      body: JSON.stringify(payload),
+      signal: deadline.signal,
+    }).catch((error: unknown) => mapRequestError(error, deadline.signal));
 
-  const responseBody = await readJsonResponse(response);
-  if (response.status === 401 || response.status === 403) {
-    throw new ApiClientError(
-      'API_AUTH_FAILED',
-      'The Job Tracker API rejected these credentials.',
-    );
+    const responseBody = await readJsonResponse(response);
+    if (response.status === 401 || response.status === 403) {
+      throw new ApiClientError(
+        'API_AUTH_FAILED',
+        'The Job Tracker API rejected these credentials.',
+      );
+    }
+
+    if (response.status === 422 || response.status === 400) {
+      throw new ApiClientError(
+        'API_VALIDATION_FAILED',
+        'The Job Tracker API rejected this job payload.',
+        JSON.stringify(responseBody),
+      );
+    }
+
+    if (!response.ok) {
+      throw new ApiClientError(
+        'API_UNEXPECTED_RESPONSE',
+        `The Job Tracker API returned HTTP ${String(response.status)}.`,
+        JSON.stringify(responseBody),
+      );
+    }
+
+    return saveJobResultSchema.parse(responseBody ?? {});
+  } finally {
+    deadline.clear();
   }
-
-  if (response.status === 422 || response.status === 400) {
-    throw new ApiClientError(
-      'API_VALIDATION_FAILED',
-      'The Job Tracker API rejected this job payload.',
-      JSON.stringify(responseBody),
-    );
-  }
-
-  if (!response.ok) {
-    throw new ApiClientError(
-      'API_UNEXPECTED_RESPONSE',
-      `The Job Tracker API returned HTTP ${String(response.status)}.`,
-      JSON.stringify(responseBody),
-    );
-  }
-
-  return saveJobResultSchema.parse(responseBody ?? {});
 }
 
 export async function testAuthConnection(
   settings: ExtensionSettings,
 ): Promise<void> {
   const apiBaseUrl = getApiBaseUrl(settings);
-  const response = await fetch(`${apiBaseUrl}/api/health/auth`, {
-    method: 'GET',
-    headers: buildHeaders(settings),
-  }).catch((error: unknown) => {
-    throw new ApiClientError(
-      'API_NETWORK_FAILED',
-      'Could not reach the Job Tracker API.',
-      stringifyUnknown(error),
-    );
-  });
+  const deadline = createRequestDeadline();
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/health/auth`, {
+      method: 'GET',
+      headers: buildHeaders(settings),
+      signal: deadline.signal,
+    }).catch((error: unknown) => mapRequestError(error, deadline.signal));
 
-  const responseBody = await readJsonResponse(response);
-  if (response.status === 401 || response.status === 403) {
+    const responseBody = await readJsonResponse(response);
+    if (response.status === 401 || response.status === 403) {
+      throw new ApiClientError(
+        'API_AUTH_FAILED',
+        'The Job Tracker API rejected these credentials.',
+        JSON.stringify(responseBody),
+      );
+    }
+
+    if (!response.ok) {
+      throw new ApiClientError(
+        'API_UNEXPECTED_RESPONSE',
+        `The Job Tracker API returned HTTP ${String(response.status)}.`,
+        JSON.stringify(responseBody),
+      );
+    }
+  } finally {
+    deadline.clear();
+  }
+}
+
+function mapRequestError(error: unknown, signal: AbortSignal): never {
+  if (signal.aborted || isAbortError(error)) {
     throw new ApiClientError(
-      'API_AUTH_FAILED',
-      'The Job Tracker API rejected these credentials.',
-      JSON.stringify(responseBody),
+      'API_TIMEOUT',
+      'The Job Tracker API request timed out. Please try again.',
+      'This request is safe to retry.',
     );
   }
-
-  if (!response.ok) {
-    throw new ApiClientError(
-      'API_UNEXPECTED_RESPONSE',
-      `The Job Tracker API returned HTTP ${String(response.status)}.`,
-      JSON.stringify(responseBody),
-    );
-  }
+  throw new ApiClientError(
+    'API_NETWORK_FAILED',
+    'Could not reach the Job Tracker API.',
+    stringifyUnknown(error),
+  );
 }
 
 function getApiBaseUrl(settings: ExtensionSettings): string {

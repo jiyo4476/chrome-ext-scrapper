@@ -48,6 +48,7 @@ export type PublicSettings = z.infer<typeof publicSettingsSchema>;
 export type PublicSettingsUpdate = z.infer<typeof publicSettingsUpdateSchema>;
 
 const STORAGE_KEY = 'jobTracker.settings';
+let settingsMutationQueue: Promise<void> = Promise.resolve();
 
 export async function getSettings(): Promise<ExtensionSettings> {
   const result = await browser.storage.local.get(STORAGE_KEY);
@@ -59,12 +60,26 @@ export async function getSettings(): Promise<ExtensionSettings> {
 export async function saveSettings(
   settings: ExtensionSettingsUpdate,
 ): Promise<ExtensionSettings> {
-  const current = await getSettings();
-  const parsed = lockProtectedSettings(
-    extensionSettingsSchema.parse({ ...current, ...settings }),
-  );
-  await browser.storage.local.set({ [STORAGE_KEY]: parsed });
-  return parsed;
+  return mutateSettings((current) => ({ ...current, ...settings }));
+}
+
+async function mutateSettings(
+  mutation: (current: ExtensionSettings) => ExtensionSettingsUpdate,
+): Promise<ExtensionSettings> {
+  let result: ExtensionSettings | undefined;
+  const operation = settingsMutationQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const current = await getSettings();
+      result = lockProtectedSettings(
+        extensionSettingsSchema.parse({ ...current, ...mutation(current) }),
+      );
+      await browser.storage.local.set({ [STORAGE_KEY]: result });
+    });
+  settingsMutationQueue = operation.catch(() => undefined);
+  await operation;
+  if (!result) throw new Error('Settings mutation did not produce a result.');
+  return result;
 }
 
 function lockProtectedSettings(settings: ExtensionSettings): ExtensionSettings {
@@ -87,4 +102,32 @@ export async function clearOAuthCredentials(): Promise<ExtensionSettings> {
     oauthRefreshToken: '',
     oauthExpiresAt: 0,
   });
+}
+
+export async function saveOAuthCredentialsIfRefreshTokenMatches(
+  expectedRefreshToken: string,
+  credentials: Pick<
+    ExtensionSettings,
+    'oauthAccessToken' | 'oauthRefreshToken' | 'oauthExpiresAt'
+  >,
+): Promise<ExtensionSettings | undefined> {
+  let ownsCredentials = false;
+  const result = await mutateSettings((current) => {
+    ownsCredentials = current.oauthRefreshToken === expectedRefreshToken;
+    return ownsCredentials ? credentials : {};
+  });
+  return ownsCredentials ? result : undefined;
+}
+
+export async function clearOAuthCredentialsIfRefreshTokenMatches(
+  expectedRefreshToken: string,
+): Promise<boolean> {
+  let ownsCredentials = false;
+  await mutateSettings((current) => {
+    ownsCredentials = current.oauthRefreshToken === expectedRefreshToken;
+    return ownsCredentials
+      ? { oauthAccessToken: '', oauthRefreshToken: '', oauthExpiresAt: 0 }
+      : {};
+  });
+  return ownsCredentials;
 }

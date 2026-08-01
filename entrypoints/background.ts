@@ -17,7 +17,11 @@ import {
 } from '../src/lib/extraction/detectPlatform';
 import type { extractJobDraft } from '../src/lib/extraction/jobDraftExtractor';
 import { JOB_DRAFT_EXTRACTOR_BRIDGE_KEY } from '../src/lib/extraction/jobDraftExtractorBridge';
-import { getValidAccessToken, signInWithAuthentik } from '../src/lib/oauth';
+import {
+  getValidAccessToken,
+  OAuthRequestError,
+  signInWithAuthentik,
+} from '../src/lib/oauth';
 import { buildScrapePayload } from '../src/lib/payload';
 import {
   clearPopupDraft,
@@ -98,6 +102,9 @@ export async function handleMessage(
       await signInWithAuthentik(await getSettings());
       return { type: 'OAUTH_SIGN_IN_RESULT', ok: true };
     } catch (error) {
+      if (error instanceof OAuthRequestError && error.retryable) {
+        return errorResponse('OAUTH_TIMEOUT', error.message);
+      }
       return errorResponse(
         'OAUTH_FAILED',
         'Authentik sign-in failed.',
@@ -356,6 +363,10 @@ async function saveJob(draft: JobDraft): Promise<ExtensionResponse> {
       return errorResponse(error.code, error.message, error.details);
     }
 
+    if (error instanceof OAuthRequestError && error.retryable) {
+      return errorResponse('OAUTH_TIMEOUT', error.message);
+    }
+
     if (error instanceof Error && error.message.includes('Authentik')) {
       return errorResponse('OAUTH_FAILED', error.message);
     }
@@ -383,6 +394,10 @@ async function testConnection(): Promise<ExtensionResponse> {
   } catch (error) {
     if (error instanceof ApiClientError) {
       return errorResponse(error.code, error.message, error.details);
+    }
+
+    if (error instanceof OAuthRequestError && error.retryable) {
+      return errorResponse('OAUTH_TIMEOUT', error.message);
     }
 
     if (error instanceof Error && error.message.includes('Sign in')) {
