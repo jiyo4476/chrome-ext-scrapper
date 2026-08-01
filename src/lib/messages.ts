@@ -17,8 +17,10 @@ export const extensionErrorCodeSchema = z.enum([
   'API_AUTH_FAILED',
   'API_VALIDATION_FAILED',
   'API_NETWORK_FAILED',
+  'API_TIMEOUT',
   'API_UNEXPECTED_RESPONSE',
   'OAUTH_FAILED',
+  'OAUTH_TIMEOUT',
   'SAVE_IN_PROGRESS',
   'STORAGE_FAILED',
 ]);
