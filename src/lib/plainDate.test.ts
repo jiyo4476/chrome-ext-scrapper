@@ -20,8 +20,23 @@ describe('plain dates', () => {
     },
   );
 
-  it('normalizes valid timestamp and human-readable inputs', () => {
+  it('normalizes only explicitly supported ISO timestamps', () => {
     expect(normalizePlainDate('2024-02-29T18:30:00Z')).toBe('2024-02-29');
-    expect(normalizePlainDate('July 1, 2026')).toBe('2026-07-01');
+    expect(normalizePlainDate('2026-07-01T08:15-06:00')).toBe('2026-07-01');
+    expect(normalizePlainDate('2026-07-01T08:15:30.123456789Z')).toBe(
+      '2026-07-01',
+    );
+  });
+
+  it.each([
+    'July 1, 2026',
+    '01/07/2026',
+    '07/01/2026',
+    '2026-07-01T24:00:00Z',
+    '2026-07-01T08:60:00Z',
+    '2026-07-01T08:15:60Z',
+    '2026-07-01Tgarbage',
+  ])('rejects locale-dependent or malformed input %s', (value) => {
+    expect(normalizePlainDate(value)).toBeUndefined();
   });
 });

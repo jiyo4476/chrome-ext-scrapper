@@ -35,6 +35,7 @@ import {
 } from '../../src/lib/taxonomyFields';
 import type { JobDraft } from '../../src/lib/schemas';
 import type { PopupDraftContext } from '../../src/lib/popupDraft';
+import { popupDraftPersistenceErrorMessage } from '../../src/lib/popupDraftFeedback';
 
 const FIELD_IDS: Record<DraftFormField, string> = {
   job_title: 'job-title',
@@ -522,6 +523,7 @@ async function saveJob(): Promise<void> {
       if (formRevision === submittedRevision) {
         await clearCurrentDraft();
         if (formRevision !== submittedRevision) {
+          await requestPopupDraft(popupDraftContext);
           await persistCurrentDraft();
         }
       } else {
@@ -712,11 +714,29 @@ async function persistCurrentDraft(): Promise<void> {
       values: readFormValues(),
     });
     const response = extensionResponseSchema.parse(rawResponse);
-    if (!response.ok || response.type !== 'SAVE_POPUP_DRAFT_RESULT') {
-      throw new Error('Could not store the popup draft.');
+    if (!response.ok && response.error.code === 'POPUP_CONTEXT_STALE') {
+      setStatus(
+        popupDraftPersistenceErrorMessage(
+          response.error.code,
+          response.error.message,
+        ),
+        'alert',
+      );
+      return;
     }
-  } catch {
+    if (!response.ok || response.type !== 'SAVE_POPUP_DRAFT_RESULT') {
+      throw new Error(
+        !response.ok
+          ? popupDraftPersistenceErrorMessage(
+              response.error.code,
+              response.error.message,
+            )
+          : 'Could not store the popup draft.',
+      );
+    }
+  } catch (error) {
     // Draft persistence is best-effort and must not block popup editing.
+    if (error instanceof Error) setStatus(error.message, 'alert');
   }
 }
 

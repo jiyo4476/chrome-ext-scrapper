@@ -516,7 +516,7 @@ describe('background save flow', () => {
     await expect(first).resolves.toMatchObject({ ok: true });
     await expect(stale).resolves.toMatchObject({
       ok: false,
-      error: { code: 'STORAGE_FAILED' },
+      error: { code: 'POPUP_CONTEXT_STALE' },
     });
     await vi.waitFor(() => {
       expect(browserMock.storage.local.remove).toHaveBeenCalledTimes(1);
@@ -536,7 +536,10 @@ describe('background save flow', () => {
         context,
         values: emptyFormValues(),
       }),
-    ).resolves.toMatchObject({ ok: false });
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'POPUP_CONTEXT_STALE' },
+    });
     expect(browserMock.storage.local.set).not.toHaveBeenCalled();
   });
 
@@ -545,7 +548,6 @@ describe('background save flow', () => {
     const context = { tabId: 42, url: 'https://example.com/jobs/42' };
     await initializeDraftContext(handleMessage, context);
     getLifecycleListeners().onRemoved(context.tabId);
-    browserMock.tabs.get.mockRejectedValue(new Error('No tab with id: 42'));
 
     await expect(
       handleMessage({
@@ -553,8 +555,71 @@ describe('background save flow', () => {
         context,
         values: emptyFormValues(),
       }),
-    ).resolves.toMatchObject({ ok: false });
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'POPUP_CONTEXT_STALE' },
+    });
     expect(browserMock.storage.local.set).not.toHaveBeenCalled();
+
+    // Chrome may eventually reuse a numeric tab ID. A fresh popup context
+    // must get a new generation rather than retaining the removed tab's state.
+    await initializeDraftContext(handleMessage, context);
+    await expect(
+      handleMessage({
+        type: 'SAVE_POPUP_DRAFT',
+        context,
+        values: emptyFormValues(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
+  });
+
+  it('keeps genuine draft storage failures distinct from stale contexts', async () => {
+    const { handleMessage } = await import('../../entrypoints/background');
+    const context = { tabId: 42, url: 'https://example.com/jobs/42' };
+    await initializeDraftContext(handleMessage, context);
+    browserMock.storage.local.set.mockRejectedValue(
+      new Error('quota exceeded'),
+    );
+
+    await expect(
+      handleMessage({
+        type: 'SAVE_POPUP_DRAFT',
+        context,
+        values: emptyFormValues(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'STORAGE_FAILED' },
+    });
+  });
+
+  it('requires context reinitialization after a permanent draft clear', async () => {
+    const { handleMessage } = await import('../../entrypoints/background');
+    const context = { tabId: 42, url: 'https://example.com/jobs/42' };
+    await initializeDraftContext(handleMessage, context);
+
+    await expect(
+      handleMessage({ type: 'CLEAR_POPUP_DRAFT', context }),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      handleMessage({
+        type: 'SAVE_POPUP_DRAFT',
+        context,
+        values: emptyFormValues(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'POPUP_CONTEXT_STALE' },
+    });
+
+    await initializeDraftContext(handleMessage, context);
+    await expect(
+      handleMessage({
+        type: 'SAVE_POPUP_DRAFT',
+        context,
+        values: emptyFormValues(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
   });
 
   it('invalidates the matching tab draft on navigation and tab removal', async () => {

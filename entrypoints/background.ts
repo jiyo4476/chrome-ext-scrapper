@@ -44,8 +44,9 @@ let popupDraftMutationQueue: Promise<void> = Promise.resolve();
 const popupDraftNavigationGenerations = new Map<number, number>();
 const popupDraftContexts = new Map<
   number,
-  { url: string; generation: number }
+  { url: string; generation: number; mutationRevision: number }
 >();
+let nextPopupDraftGeneration = 1;
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((message: unknown) => {
@@ -72,6 +73,7 @@ export default defineBackground(() => {
   browser.tabs.onRemoved.addListener((tabId) => {
     advancePopupDraftGeneration(tabId);
     popupDraftContexts.delete(tabId);
+    popupDraftNavigationGenerations.delete(tabId);
     void enqueuePopupDraftMutation(() => clearPopupDraftForTab(tabId));
   });
 });
@@ -171,7 +173,8 @@ async function readPopupDraft(
   try {
     popupDraftContexts.set(context.tabId, {
       url: context.url,
-      generation: getPopupDraftGeneration(context.tabId),
+      generation: getOrCreatePopupDraftGeneration(context.tabId),
+      mutationRevision: 0,
     });
     await popupDraftMutationQueue.catch(() => undefined);
     return {
@@ -191,8 +194,9 @@ async function persistPopupDraft(
   try {
     const registeredContext = popupDraftContexts.get(context.tabId);
     if (registeredContext?.url !== context.url) {
-      throw new Error('The popup draft context was not initialized.');
+      return stalePopupDraftResponse();
     }
+    registeredContext.mutationRevision += 1;
     await enqueuePopupDraftMutation(async () => {
       await assertCurrentPopupDraftContext(
         context,
@@ -201,44 +205,80 @@ async function persistPopupDraft(
       await savePopupDraft(context, values);
     });
     return { type: 'SAVE_POPUP_DRAFT_RESULT', ok: true };
-  } catch {
+  } catch (error) {
+    if (error instanceof PopupDraftContextError) {
+      return stalePopupDraftResponse();
+    }
     return errorResponse('STORAGE_FAILED', 'Could not store the popup draft.');
   }
 }
 
-function getPopupDraftGeneration(tabId: number): number {
-  return popupDraftNavigationGenerations.get(tabId) ?? 0;
+class PopupDraftContextError extends Error {}
+
+function stalePopupDraftResponse(): ExtensionResponse {
+  return errorResponse(
+    'POPUP_CONTEXT_STALE',
+    'This page changed or closed, so its outdated draft was not stored.',
+  );
+}
+
+function getOrCreatePopupDraftGeneration(tabId: number): number {
+  const current = popupDraftNavigationGenerations.get(tabId);
+  if (current !== undefined) return current;
+  const generation = nextPopupDraftGeneration++;
+  popupDraftNavigationGenerations.set(tabId, generation);
+  return generation;
 }
 
 function advancePopupDraftGeneration(tabId: number): void {
-  popupDraftNavigationGenerations.set(
-    tabId,
-    getPopupDraftGeneration(tabId) + 1,
-  );
+  popupDraftNavigationGenerations.set(tabId, nextPopupDraftGeneration++);
 }
 
 async function assertCurrentPopupDraftContext(
   context: PopupDraftContext,
   expectedGeneration: number,
 ): Promise<void> {
-  if (getPopupDraftGeneration(context.tabId) !== expectedGeneration) {
-    throw new Error('The source tab navigated before the draft was stored.');
+  if (
+    popupDraftNavigationGenerations.get(context.tabId) !== expectedGeneration
+  ) {
+    throw new PopupDraftContextError(
+      'The source tab navigated before the draft was stored.',
+    );
   }
 
-  const tab = await browser.tabs.get(context.tabId);
+  let tab: chrome.tabs.Tab;
+  try {
+    tab = await browser.tabs.get(context.tabId);
+  } catch {
+    throw new PopupDraftContextError(
+      'The source tab closed before the draft was stored.',
+    );
+  }
   if (
     tab.url !== context.url ||
-    getPopupDraftGeneration(context.tabId) !== expectedGeneration
+    popupDraftNavigationGenerations.get(context.tabId) !== expectedGeneration
   ) {
-    throw new Error('The source tab no longer matches the popup draft.');
+    throw new PopupDraftContextError(
+      'The source tab no longer matches the popup draft.',
+    );
   }
 }
 
 async function removePopupDraft(
   context: PopupDraftContext,
 ): Promise<ExtensionResponse> {
+  const registeredContext = popupDraftContexts.get(context.tabId);
+  const mutationRevision = registeredContext?.mutationRevision;
   try {
     await enqueuePopupDraftMutation(() => clearPopupDraft(context));
+    const contextUnchanged =
+      !registeredContext ||
+      (popupDraftContexts.get(context.tabId) === registeredContext &&
+        registeredContext.mutationRevision === mutationRevision);
+    if (contextUnchanged) {
+      popupDraftContexts.delete(context.tabId);
+      popupDraftNavigationGenerations.delete(context.tabId);
+    }
     return { type: 'CLEAR_POPUP_DRAFT_RESULT', ok: true };
   } catch {
     return errorResponse('STORAGE_FAILED', 'Could not clear the popup draft.');

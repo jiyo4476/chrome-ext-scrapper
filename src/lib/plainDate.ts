@@ -27,13 +27,12 @@ export const plainDateSchema = z.string().refine(isPlainDate, {
 
 export function normalizePlainDate(raw: string): string | undefined {
   const trimmed = raw.trim();
-  const isoPrefix = /^(\d{4}-\d{2}-\d{2})(?:$|T)/.exec(trimmed);
+  const isoPrefix =
+    /^(\d{4}-\d{2}-\d{2})(?:$|T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,9})?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?)$/.exec(
+      trimmed,
+    );
   if (isoPrefix?.[1]) {
     return isPlainDate(isoPrefix[1]) ? isoPrefix[1] : undefined;
   }
-
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) return undefined;
-  const normalized = parsed.toISOString().slice(0, 10);
-  return isPlainDate(normalized) ? normalized : undefined;
+  return undefined;
 }
