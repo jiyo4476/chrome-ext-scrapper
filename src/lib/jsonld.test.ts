@@ -80,6 +80,15 @@ describe('buildJobPostingJsonLd', () => {
     expect(JSON.stringify(result)).not.toContain('undefined');
   });
 
+  it('omits an impossible date if an unvalidated draft reaches export', () => {
+    const result = buildJobPostingJsonLd({
+      ...baseDraft,
+      date_posted: '2026-02-30',
+    });
+
+    expect(result).not.toHaveProperty('datePosted');
+  });
+
   it('maps every job_type to its schema.org employmentType', () => {
     const cases: [JobDraft['job_type'], string][] = [
       ['full_time', 'FULL_TIME'],

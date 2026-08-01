@@ -22,6 +22,7 @@ export const extensionErrorCodeSchema = z.enum([
   'OAUTH_FAILED',
   'OAUTH_TIMEOUT',
   'SAVE_IN_PROGRESS',
+  'POPUP_CONTEXT_STALE',
   'STORAGE_FAILED',
 ]);
 

@@ -6,6 +6,7 @@ import {
   type ApiSourcePlatform,
   type JobDraft,
 } from '../schemas';
+import { normalizePlainDate } from '../plainDate';
 import { extractTaxonomy } from './taxonomyExtractor';
 import { mergeTaxonomyTags } from '../taxonomyFields';
 
@@ -299,17 +300,6 @@ export async function extractJobDraft(detection: {
     if (typeof value === 'string' && value.trim() !== '') {
       const parsed = Number(value);
       if (!Number.isNaN(parsed)) return parsed;
-    }
-    return undefined;
-  }
-
-  function normalizeDate(raw: string): string | undefined {
-    const isoMatch = /^(\d{4}-\d{2}-\d{2})/.exec(raw.trim());
-    if (isoMatch?.[1]) return isoMatch[1];
-
-    const parsed = new Date(raw);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toISOString().slice(0, 10);
     }
     return undefined;
   }
@@ -1395,7 +1385,7 @@ export async function extractJobDraft(detection: {
     const rawDate = dateEl?.getAttribute('datetime') ?? textOf(dateEl);
     addCandidate(
       'date_posted',
-      rawDate ? normalizeDate(rawDate) : undefined,
+      rawDate ? normalizePlainDate(rawDate) : undefined,
       'dom',
       'high',
     );
@@ -2513,7 +2503,12 @@ export async function extractJobDraft(detection: {
 
     const datePosted = jobPosting.datePosted;
     if (typeof datePosted === 'string') {
-      addCandidate('date_posted', normalizeDate(datePosted), 'jsonld', 'high');
+      addCandidate(
+        'date_posted',
+        normalizePlainDate(datePosted),
+        'jsonld',
+        'high',
+      );
     }
 
     addCandidate(

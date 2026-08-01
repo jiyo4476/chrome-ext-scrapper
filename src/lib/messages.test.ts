@@ -109,6 +109,16 @@ describe('extension message contracts', () => {
         },
       }),
     ).toMatchObject({ ok: false });
+    expect(
+      extensionResponseSchema.parse({
+        type: 'ERROR',
+        ok: false,
+        error: {
+          code: 'POPUP_CONTEXT_STALE',
+          message: 'The source page changed.',
+        },
+      }),
+    ).toMatchObject({ error: { code: 'POPUP_CONTEXT_STALE' } });
   });
 
   it('validates popup draft storage requests and responses', () => {

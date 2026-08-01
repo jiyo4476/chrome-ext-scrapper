@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { type JobDraft, jobDraftSchema } from './schemas';
+import { isPlainDate, PLAIN_DATE_MESSAGE } from './plainDate';
 import {
   joinTagList,
   mergeTaxonomyTags,
@@ -242,10 +243,10 @@ export function validateFormValues(values: PopupFormValues): FieldError[] {
   }
 
   const datePosted = values.date_posted.trim();
-  if (datePosted && !/^\d{4}-\d{2}-\d{2}$/.test(datePosted)) {
+  if (datePosted && !isPlainDate(datePosted)) {
     errors.push({
       field: 'date_posted',
-      message: 'Use the format YYYY-MM-DD.',
+      message: PLAIN_DATE_MESSAGE,
     });
   }
 

@@ -84,6 +84,24 @@ describe('extractJobDraft — JSON-LD source', () => {
     expect(candidates.company_name).toBeUndefined();
   });
 
+  it('drops an impossible JSON-LD date instead of normalizing it forward', async () => {
+    setHead(`
+      <script type="application/ld+json">
+        {
+          "@type": "JobPosting",
+          "title": "Date Tester",
+          "datePosted": "2026-02-30",
+          "url": "https://example.com/jobs/date-tester"
+        }
+      </script>
+    `);
+
+    const { draft, candidates } = await extractJobDraft(OTHER);
+
+    expect(draft.date_posted).toBeUndefined();
+    expect(candidates.date_posted).toBeUndefined();
+  });
+
   it('joins multiple JSON-LD jobLocation entries and caps the joined count', async () => {
     setHead(`
       <title>Data Engineer - Data Co</title>

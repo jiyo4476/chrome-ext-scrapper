@@ -142,6 +142,21 @@ describe('validateFormValues', () => {
     );
   });
 
+  it('flags impossible dates while accepting leap dates', () => {
+    expect(
+      validateFormValues({
+        ...emptyFormValues(),
+        date_posted: '2025-02-29',
+      }),
+    ).toContainEqual(expect.objectContaining({ field: 'date_posted' }));
+    expect(
+      validateFormValues({
+        ...emptyFormValues(),
+        date_posted: '2024-02-29',
+      }),
+    ).toEqual([]);
+  });
+
   it('flags negative and non-numeric salary fields', () => {
     const errors = validateFormValues({
       ...emptyFormValues(),

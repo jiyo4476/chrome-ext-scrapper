@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { plainDateSchema } from './plainDate';
 
 export const MAX_JOB_DESCRIPTION_LENGTH = 50_000;
 export const MAX_FIELD_LENGTH = 2_000;
@@ -53,10 +54,7 @@ export const jobDraftSchema = z.object({
   job_location: optionalText,
   is_remote: z.boolean().optional(),
   job_description: z.string().max(MAX_JOB_DESCRIPTION_LENGTH).optional(),
-  date_posted: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
+  date_posted: plainDateSchema.optional(),
   salary_text: optionalText,
   salary_type: salaryTypeSchema.optional(),
   salary_min: z.number().int().nonnegative().optional(),
