@@ -108,6 +108,25 @@ const USD_SALARY_FORMATTER = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 2,
 });
 
+const URL_IDENTITY_STABLE_QUERY_KEYS = [
+  'jk',
+  'vjk',
+  'jobId',
+  'job_id',
+  'gh_jid',
+] as const;
+const URL_IDENTITY_IGNORED_QUERY_KEYS = new Set([
+  'ref',
+  'referrer',
+  'source',
+  'src',
+  'campaign',
+  'trk',
+  'trackingId',
+  'from',
+]);
+const INDEED_PANE_READINESS_TIMEOUT_MS = 800;
+
 function formatUsdSalaryRange(min: number, max: number): string {
   return `${USD_SALARY_FORMATTER.format(min)} - ${USD_SALARY_FORMATTER.format(max)}`;
 }
@@ -314,14 +333,13 @@ export async function extractJobDraft(detection: {
       const normalizePath = (path: string) => path.replace(/\/+$/, '') || '/';
       if (candidate.origin !== active.origin) return false;
 
-      const stableIdKeys = ['jk', 'vjk', 'jobId', 'job_id', 'gh_jid'];
       const candidateStableIds = new Set(
-        stableIdKeys.flatMap((key) => {
+        URL_IDENTITY_STABLE_QUERY_KEYS.flatMap((key) => {
           const value = candidate.searchParams.get(key);
           return value ? [value] : [];
         }),
       );
-      const activeStableIds = stableIdKeys.flatMap((key) => {
+      const activeStableIds = URL_IDENTITY_STABLE_QUERY_KEYS.flatMap((key) => {
         const value = active.searchParams.get(key);
         return value ? [value] : [];
       });
@@ -333,17 +351,7 @@ export async function extractJobDraft(detection: {
         const params = Array.from(value.searchParams.entries())
           .filter(
             ([key]) =>
-              !/^utm_/i.test(key) &&
-              ![
-                'ref',
-                'referrer',
-                'source',
-                'src',
-                'campaign',
-                'trk',
-                'trackingId',
-                'from',
-              ].includes(key),
+              !/^utm_/i.test(key) && !URL_IDENTITY_IGNORED_QUERY_KEYS.has(key),
           )
           .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
             `${leftKey}=${leftValue}`.localeCompare(
@@ -1078,7 +1086,7 @@ export async function extractJobDraft(detection: {
     const snapshot = await waitForIndeedPaneSnapshot(
       paneRoot,
       isSearchResultsPage,
-      800,
+      INDEED_PANE_READINESS_TIMEOUT_MS,
     );
     const titleEl = snapshot?.titleEl;
     const descriptionEl = snapshot?.descriptionEl;
