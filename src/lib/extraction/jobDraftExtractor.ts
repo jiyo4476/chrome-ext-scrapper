@@ -312,10 +312,49 @@ export async function extractJobDraft(detection: {
       const candidate = new URL(url, location.href);
       const active = new URL(location.href);
       const normalizePath = (path: string) => path.replace(/\/+$/, '') || '/';
+      if (candidate.origin !== active.origin) return false;
+
+      const stableIdKeys = ['jk', 'vjk', 'jobId', 'job_id', 'gh_jid'];
+      const candidateStableIds = new Set(
+        stableIdKeys.flatMap((key) => {
+          const value = candidate.searchParams.get(key);
+          return value ? [value] : [];
+        }),
+      );
+      const activeStableIds = stableIdKeys.flatMap((key) => {
+        const value = active.searchParams.get(key);
+        return value ? [value] : [];
+      });
+      if (activeStableIds.some((id) => candidateStableIds.has(id))) {
+        return true;
+      }
+
+      const identitySearch = (value: URL): string => {
+        const params = Array.from(value.searchParams.entries())
+          .filter(
+            ([key]) =>
+              !/^utm_/i.test(key) &&
+              ![
+                'ref',
+                'referrer',
+                'source',
+                'src',
+                'campaign',
+                'trk',
+                'trackingId',
+                'from',
+              ].includes(key),
+          )
+          .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+            `${leftKey}=${leftValue}`.localeCompare(
+              `${rightKey}=${rightValue}`,
+            ),
+          );
+        return new URLSearchParams(params).toString();
+      };
       return (
-        candidate.origin === active.origin &&
         normalizePath(candidate.pathname) === normalizePath(active.pathname) &&
-        candidate.search === active.search
+        identitySearch(candidate) === identitySearch(active)
       );
     } catch {
       return false;
@@ -700,15 +739,20 @@ export async function extractJobDraft(detection: {
     // certainly the one actually being viewed -- prefer it outright over a
     // richer but unrelated block (e.g. a "similar jobs" widget's JobPosting)
     // that just happens to have more fields populated.
-    const currentUrlMatch = postings.find((posting) => {
+    const currentUrlMatches = postings.filter((posting) => {
       const url = posting.url;
       return typeof url === 'string' && pageIdentityMatches(url);
     });
-    if (currentUrlMatch) return currentUrlMatch;
+    if (currentUrlMatches.length > 0) {
+      return currentUrlMatches.reduce((best, current) =>
+        richnessScore(current) > richnessScore(best) ? current : best,
+      );
+    }
 
-    return postings.reduce((best, current) =>
-      richnessScore(current) > richnessScore(best) ? current : best,
-    );
+    // A single block is unambiguous even when it omits its own URL. With
+    // multiple unmatched blocks, choosing the richest can bind the active
+    // page to a recommendation widget, so reject the entire ambiguous set.
+    return postings.length === 1 ? postings[0] : undefined;
   }
 
   function metaContent(name: string): string | undefined {
@@ -779,15 +823,32 @@ export async function extractJobDraft(detection: {
       Array.from(container.querySelectorAll(marker)),
     );
     // A card can match several markers, and one marker can sit inside
-    // another; keep each card once, outermost wins.
-    return cards.filter(
-      (card, index) =>
-        cards.indexOf(card) === index &&
-        !cards.some((other) => other !== card && other.contains(card)),
-    );
+    // another. Identity dedup plus an ancestor walk keeps the outermost card
+    // in O(cards * DOM depth), avoiding pairwise contains() scans.
+    const uniqueCards = Array.from(new Set(cards));
+    const cardSet = new Set(uniqueCards);
+    return uniqueCards.filter((card) => {
+      for (
+        let ancestor = card.parentElement;
+        ancestor && ancestor !== container;
+        ancestor = ancestor.parentElement
+      ) {
+        if (cardSet.has(ancestor)) return false;
+      }
+      return true;
+    });
   }
 
-  function extractIndeedSelectedCard(detailTitle: string | undefined): boolean {
+  interface IndeedSelection {
+    anchor: Element;
+    card: Element;
+    jobId: string | undefined;
+    title: string | undefined;
+  }
+
+  function findIndeedSelection(
+    detailTitle: string | undefined,
+  ): IndeedSelection | undefined {
     const primaryCards = findIndeedPrimaryCards();
     const searchRoots: Element[] = primaryCards.length
       ? primaryCards
@@ -832,7 +893,7 @@ export async function extractJobDraft(detection: {
     // A URL-derived vjk is not proof that an attached/hidden pane represents
     // the same job. Only a pressed or uniquely title-correlated card verifies
     // pane identity.
-    if (!anchor) return false;
+    if (!anchor) return undefined;
 
     const rawHref = anchor.getAttribute('href') ?? undefined;
     const jkFromHref = (): string | undefined => {
@@ -846,6 +907,23 @@ export async function extractJobDraft(detection: {
       }
     };
     const jk = anchor.getAttribute('data-jk') ?? jkFromHref();
+
+    const card =
+      anchor.closest([...INDEED_PRIMARY_CARD_MARKERS, 'li'].join(', ')) ??
+      anchor;
+    return {
+      anchor,
+      card,
+      jobId: jk,
+      title: cleanIndeedTitle(
+        anchor.getAttribute('aria-label') ?? textOf(anchor),
+      ),
+    };
+  }
+
+  function extractIndeedSelectedCard(selection: IndeedSelection): boolean {
+    const { anchor, card, jobId: jk, title: cardTitle } = selection;
+    const rawHref = anchor.getAttribute('href') ?? undefined;
 
     addCandidate('external_job_id', jk, 'dom', 'high');
 
@@ -862,12 +940,6 @@ export async function extractJobDraft(detection: {
     // which matters for job_title -- the pane block's bare-h1 fallback can
     // land on the serp's own search header (e.g. "engineer jobs in Austin"),
     // while the card title is the selected posting's title verbatim.
-    const card =
-      anchor.closest([...INDEED_PRIMARY_CARD_MARKERS, 'li'].join(', ')) ??
-      anchor;
-    const cardTitle = cleanIndeedTitle(
-      anchor.getAttribute('aria-label') ?? textOf(anchor),
-    );
     addCandidate('job_title', cardTitle, 'dom', 'high');
     addCandidate(
       'company_name',
@@ -915,6 +987,81 @@ export async function extractJobDraft(detection: {
     return Boolean(jk);
   }
 
+  interface IndeedPaneSnapshot {
+    titleEl: Element | undefined;
+    descriptionEl: Element | undefined;
+    selection: IndeedSelection | undefined;
+  }
+
+  function readIndeedPaneSnapshot(
+    paneRoot: ParentNode,
+    isSearchResultsPage: boolean,
+  ): IndeedPaneSnapshot | undefined {
+    const titleEl =
+      queryFirst(
+        [
+          'h1.jobsearch-JobInfoHeader-title',
+          '[data-testid="jobsearch-JobInfoHeader-title"]',
+          'h1',
+        ],
+        paneRoot,
+      ) ?? undefined;
+    const detailTitle = cleanIndeedTitle(textOf(titleEl));
+    const selection = findIndeedSelection(detailTitle);
+    if (
+      isSearchResultsPage &&
+      (!selection ||
+        !detailTitle ||
+        normalizeIndeedTitle(selection.title) !==
+          normalizeIndeedTitle(detailTitle))
+    ) {
+      return undefined;
+    }
+    return {
+      titleEl,
+      descriptionEl:
+        queryFirst(
+          ['#jobDescriptionText', '[data-testid="jobDescriptionText"]'],
+          paneRoot,
+        ) ?? undefined,
+      selection,
+    };
+  }
+
+  function waitForIndeedPaneSnapshot(
+    paneRoot: ParentNode,
+    isSearchResultsPage: boolean,
+    timeoutMs: number,
+  ): Promise<IndeedPaneSnapshot | undefined> {
+    return new Promise((resolve) => {
+      const read = () => readIndeedPaneSnapshot(paneRoot, isSearchResultsPage);
+      const immediate = read();
+      if (immediate?.titleEl && immediate.descriptionEl) {
+        resolve(immediate);
+        return;
+      }
+      const observer = new MutationObserver(() => {
+        const snapshot = read();
+        if (snapshot?.titleEl && snapshot.descriptionEl) {
+          observer.disconnect();
+          clearTimeout(timer);
+          resolve(snapshot);
+        }
+      });
+      observer.observe(paneRoot, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['aria-pressed'],
+      });
+      const timer = setTimeout(() => {
+        observer.disconnect();
+        resolve(read());
+      }, timeoutMs);
+    });
+  }
+
   async function extractIndeedDom(): Promise<void> {
     // Wait on title and description together -- the header commonly paints
     // before #jobDescriptionText, which Indeed often populates via a
@@ -922,33 +1069,25 @@ export async function extractJobDraft(detection: {
     // resolves and silently miss a still-loading description.
     const rightPane = document.querySelector('.jobsearch-RightPane');
     const paneRoot = rightPane ?? document.documentElement;
-    const [titleEl, descriptionEl] = await waitForEach(
-      [
-        bySelector(
-          [
-            'h1.jobsearch-JobInfoHeader-title',
-            '[data-testid="jobsearch-JobInfoHeader-title"]',
-            'h1',
-          ],
-          paneRoot,
-        ),
-        bySelector(
-          ['#jobDescriptionText', '[data-testid="jobDescriptionText"]'],
-          paneRoot,
-        ),
-      ],
-      800,
-    );
-    const detailTitle = textOf(titleEl);
-    const hasTrustedIdentity = extractIndeedSelectedCard(detailTitle);
     const hiddenPane =
       rightPane !== null && getComputedStyle(rightPane).display === 'none';
     const isSearchResultsPage =
       queryFirst(INDEED_PRIMARY_RESULT_CONTAINERS) !== null ||
       location.pathname === '/jobs' ||
       /-jobs\.html$/i.test(location.pathname);
+    const snapshot = await waitForIndeedPaneSnapshot(
+      paneRoot,
+      isSearchResultsPage,
+      800,
+    );
+    const titleEl = snapshot?.titleEl;
+    const descriptionEl = snapshot?.descriptionEl;
+    const detailTitle = textOf(titleEl);
+    const selection = snapshot?.selection ?? findIndeedSelection(undefined);
+    if (selection) extractIndeedSelectedCard(selection);
+    const hasCorrelatedPane = Boolean(snapshot?.selection);
     const acceptPane =
-      hasTrustedIdentity || (!isSearchResultsPage && !hiddenPane);
+      hasCorrelatedPane || (!isSearchResultsPage && !hiddenPane);
     addCandidate(
       'job_title',
       acceptPane ? cleanIndeedTitle(detailTitle) : undefined,
@@ -2288,9 +2427,7 @@ export async function extractJobDraft(detection: {
 
       const timer = setTimeout(() => {
         observer.disconnect();
-        // No explicit selection ever appeared -- fall back to the first
-        // heading found, if any, rather than surfacing nothing.
-        resolve(queryGoogleJobHeadings()[0]);
+        resolve(undefined);
       }, timeoutMs);
     });
   }
