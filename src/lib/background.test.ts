@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { JOB_DRAFT_EXTRACTOR_BRIDGE_KEY } from './extraction/jobDraftExtractorBridge';
+import type { ExtensionMessage, ExtensionResponse } from './messages';
 import { emptyFormValues } from './popupForm';
 
 const browserMock = vi.hoisted(() => ({
@@ -10,6 +11,7 @@ const browserMock = vi.hoisted(() => ({
   },
   tabs: {
     query: vi.fn(),
+    get: vi.fn(),
     onUpdated: {
       addListener: vi.fn(),
     },
@@ -49,6 +51,12 @@ describe('background save flow', () => {
     browserMock.storage.local.get.mockResolvedValue({});
     browserMock.storage.local.set.mockResolvedValue(undefined);
     browserMock.storage.local.remove.mockResolvedValue(undefined);
+    browserMock.tabs.get.mockImplementation((tabId: number) =>
+      Promise.resolve({
+        id: tabId,
+        url: `https://example.com/jobs/${String(tabId)}`,
+      }),
+    );
   });
 
   it('surfaces the Authentik sign-in prompt when saving before sign-in', async () => {
@@ -390,6 +398,7 @@ describe('background save flow', () => {
       .mockResolvedValueOnce(undefined);
     const { handleMessage } = await import('../../entrypoints/background');
     const context = { tabId: 42, url: 'https://example.com/jobs/42' };
+    await initializeDraftContext(handleMessage, context);
     const firstValues = { ...emptyFormValues(), job_title: 'First' };
     const secondValues = { ...emptyFormValues(), job_title: 'Second' };
 
@@ -444,6 +453,7 @@ describe('background save flow', () => {
       return Promise.resolve();
     });
     const { handleMessage } = await import('../../entrypoints/background');
+    await initializeDraftContext(handleMessage, context);
 
     const clear = handleMessage({ type: 'CLEAR_POPUP_DRAFT', context });
     const saveEdit = handleMessage({
@@ -461,6 +471,90 @@ describe('background save flow', () => {
       ok: true,
     });
     expect(operations).toEqual(['clear', 'save edit']);
+  });
+
+  it('rejects a queued draft write after same-origin SPA navigation', async () => {
+    let finishFirstWrite: (() => void) | undefined;
+    browserMock.storage.local.set.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirstWrite = resolve;
+        }),
+    );
+    const { handleMessage } = await import('../../entrypoints/background');
+    const context = { tabId: 42, url: 'https://example.com/jobs/42' };
+    await initializeDraftContext(handleMessage, context);
+    const first = handleMessage({
+      type: 'SAVE_POPUP_DRAFT',
+      context,
+      values: emptyFormValues(),
+    });
+    const stale = handleMessage({
+      type: 'SAVE_POPUP_DRAFT',
+      context,
+      values: { ...emptyFormValues(), job_title: 'Stale' },
+    });
+
+    await vi.waitFor(() => {
+      expect(browserMock.storage.local.set).toHaveBeenCalledTimes(1);
+    });
+    const { onUpdated } = getLifecycleListeners();
+    onUpdated(context.tabId, { url: 'https://example.com/jobs/43' });
+    browserMock.tabs.get.mockResolvedValue({
+      id: context.tabId,
+      url: 'https://example.com/jobs/43',
+    });
+    browserMock.storage.local.get.mockResolvedValue({
+      'jobTracker.popupDraft': {
+        ...context,
+        values: emptyFormValues(),
+        updatedAt: 1,
+      },
+    });
+    finishFirstWrite?.();
+
+    await expect(first).resolves.toMatchObject({ ok: true });
+    await expect(stale).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'STORAGE_FAILED' },
+    });
+    await vi.waitFor(() => {
+      expect(browserMock.storage.local.remove).toHaveBeenCalledTimes(1);
+    });
+    expect(browserMock.storage.local.set).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects old-context writes after full navigation starts', async () => {
+    const { handleMessage } = await import('../../entrypoints/background');
+    const context = { tabId: 42, url: 'https://example.com/jobs/42' };
+    await initializeDraftContext(handleMessage, context);
+    getLifecycleListeners().onUpdated(context.tabId, { status: 'loading' });
+
+    await expect(
+      handleMessage({
+        type: 'SAVE_POPUP_DRAFT',
+        context,
+        values: emptyFormValues(),
+      }),
+    ).resolves.toMatchObject({ ok: false });
+    expect(browserMock.storage.local.set).not.toHaveBeenCalled();
+  });
+
+  it('rejects old-context writes after tab closure', async () => {
+    const { handleMessage } = await import('../../entrypoints/background');
+    const context = { tabId: 42, url: 'https://example.com/jobs/42' };
+    await initializeDraftContext(handleMessage, context);
+    getLifecycleListeners().onRemoved(context.tabId);
+    browserMock.tabs.get.mockRejectedValue(new Error('No tab with id: 42'));
+
+    await expect(
+      handleMessage({
+        type: 'SAVE_POPUP_DRAFT',
+        context,
+        values: emptyFormValues(),
+      }),
+    ).resolves.toMatchObject({ ok: false });
+    expect(browserMock.storage.local.set).not.toHaveBeenCalled();
   });
 
   it('invalidates the matching tab draft on navigation and tab removal', async () => {
@@ -508,3 +602,33 @@ describe('background save flow', () => {
     });
   });
 });
+
+function getLifecycleListeners(): {
+  onUpdated: (
+    tabId: number,
+    changeInfo: { status?: string; url?: string },
+  ) => void;
+  onRemoved: (tabId: number) => void;
+} {
+  const onUpdated: unknown =
+    browserMock.tabs.onUpdated.addListener.mock.calls.at(-1)?.[0];
+  const onRemoved: unknown =
+    browserMock.tabs.onRemoved.addListener.mock.calls.at(-1)?.[0];
+  if (typeof onUpdated !== 'function' || typeof onRemoved !== 'function') {
+    throw new Error('Expected background tab lifecycle listeners.');
+  }
+  return {
+    onUpdated: onUpdated as (
+      tabId: number,
+      changeInfo: { status?: string; url?: string },
+    ) => void,
+    onRemoved: onRemoved as (tabId: number) => void,
+  };
+}
+
+async function initializeDraftContext(
+  handleMessage: (message: ExtensionMessage) => Promise<ExtensionResponse>,
+  context: { tabId: number; url: string },
+): Promise<void> {
+  await handleMessage({ type: 'GET_POPUP_DRAFT', context });
+}

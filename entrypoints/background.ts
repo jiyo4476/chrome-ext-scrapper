@@ -41,6 +41,11 @@ import {
 
 let saveJobInFlight = false;
 let popupDraftMutationQueue: Promise<void> = Promise.resolve();
+const popupDraftNavigationGenerations = new Map<number, number>();
+const popupDraftContexts = new Map<
+  number,
+  { url: string; generation: number }
+>();
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((message: unknown) => {
@@ -59,11 +64,14 @@ export default defineBackground(() => {
     // example, same-origin SPA navigation). Loading status covers full-page
     // navigation without adding broad tab/host visibility.
     if (changeInfo.status === 'loading' || changeInfo.url !== undefined) {
+      advancePopupDraftGeneration(tabId);
       void enqueuePopupDraftMutation(() => clearPopupDraftForTab(tabId));
     }
   });
 
   browser.tabs.onRemoved.addListener((tabId) => {
+    advancePopupDraftGeneration(tabId);
+    popupDraftContexts.delete(tabId);
     void enqueuePopupDraftMutation(() => clearPopupDraftForTab(tabId));
   });
 });
@@ -161,6 +169,10 @@ async function readPopupDraft(
   context: PopupDraftContext,
 ): Promise<ExtensionResponse> {
   try {
+    popupDraftContexts.set(context.tabId, {
+      url: context.url,
+      generation: getPopupDraftGeneration(context.tabId),
+    });
     await popupDraftMutationQueue.catch(() => undefined);
     return {
       type: 'GET_POPUP_DRAFT_RESULT',
@@ -177,10 +189,48 @@ async function persistPopupDraft(
   values: PopupFormValues,
 ): Promise<ExtensionResponse> {
   try {
-    await enqueuePopupDraftMutation(() => savePopupDraft(context, values));
+    const registeredContext = popupDraftContexts.get(context.tabId);
+    if (registeredContext?.url !== context.url) {
+      throw new Error('The popup draft context was not initialized.');
+    }
+    await enqueuePopupDraftMutation(async () => {
+      await assertCurrentPopupDraftContext(
+        context,
+        registeredContext.generation,
+      );
+      await savePopupDraft(context, values);
+    });
     return { type: 'SAVE_POPUP_DRAFT_RESULT', ok: true };
   } catch {
     return errorResponse('STORAGE_FAILED', 'Could not store the popup draft.');
+  }
+}
+
+function getPopupDraftGeneration(tabId: number): number {
+  return popupDraftNavigationGenerations.get(tabId) ?? 0;
+}
+
+function advancePopupDraftGeneration(tabId: number): void {
+  popupDraftNavigationGenerations.set(
+    tabId,
+    getPopupDraftGeneration(tabId) + 1,
+  );
+}
+
+async function assertCurrentPopupDraftContext(
+  context: PopupDraftContext,
+  expectedGeneration: number,
+): Promise<void> {
+  if (getPopupDraftGeneration(context.tabId) !== expectedGeneration) {
+    throw new Error('The source tab navigated before the draft was stored.');
+  }
+
+  const tab = await browser.tabs.get(context.tabId);
+  if (
+    tab.url !== context.url ||
+    getPopupDraftGeneration(context.tabId) !== expectedGeneration
+  ) {
+    throw new Error('The source tab no longer matches the popup draft.');
   }
 }
 

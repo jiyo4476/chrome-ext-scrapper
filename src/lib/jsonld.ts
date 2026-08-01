@@ -1,4 +1,5 @@
 import type { JobDraft } from './schemas';
+import { isPlainDate } from './plainDate';
 
 const EMPLOYMENT_TYPE_MAP: Record<NonNullable<JobDraft['job_type']>, string> = {
   full_time: 'FULL_TIME',
@@ -41,7 +42,10 @@ export function buildJobPostingJsonLd(
     '@type': 'JobPosting',
     title: draft.job_title,
     description: draft.job_description,
-    datePosted: draft.date_posted,
+    datePosted:
+      draft.date_posted && isPlainDate(draft.date_posted)
+        ? draft.date_posted
+        : undefined,
     employmentType: draft.job_type
       ? EMPLOYMENT_TYPE_MAP[draft.job_type]
       : undefined,

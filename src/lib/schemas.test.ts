@@ -50,4 +50,14 @@ describe('scrape payload schema', () => {
       }),
     ).toThrow();
   });
+
+  it('accepts leap dates and rejects impossible calendar dates', () => {
+    expect(
+      scrapePayloadSchema.parse({ ...basePayload, date_posted: '2024-02-29' })
+        .date_posted,
+    ).toBe('2024-02-29');
+    expect(() =>
+      scrapePayloadSchema.parse({ ...basePayload, date_posted: '2025-02-29' }),
+    ).toThrow();
+  });
 });
