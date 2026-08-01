@@ -267,7 +267,7 @@ describe('extractJobDraft — JSON-LD source', () => {
     expect(draft.job_title).toBe('Graph Engineer');
   });
 
-  it('picks the richest JobPosting when multiple are present', async () => {
+  it('rejects multiple unmatched JobPosting blocks as ambiguous', async () => {
     setHead(`
       <script type="application/ld+json">
         { "@type": "JobPosting", "title": "Thin Posting" }
@@ -285,8 +285,40 @@ describe('extractJobDraft — JSON-LD source', () => {
 
     const { draft } = await extractJobDraft(OTHER);
 
-    expect(draft.job_title).toBe('Rich Posting');
-    expect(draft.company_name).toBe('Rich Co');
+    expect(draft.job_title).toBeUndefined();
+    expect(draft.company_name).toBeUndefined();
+  });
+
+  it('matches the active JSON-LD posting while ignoring tracking query parameters', async () => {
+    setLocation(
+      'https://example.com/jobs/platform-engineer?utm_source=search&ref=serp',
+    );
+    setHead(`
+      <script type="application/ld+json">
+        { "@type": "JobPosting", "title": "Platform Engineer", "url": "https://example.com/jobs/platform-engineer?utm_campaign=widget" }
+      </script>
+      <script type="application/ld+json">
+        { "@type": "JobPosting", "title": "Recommended Job", "description": "Richer but unrelated", "url": "https://example.com/jobs/recommended" }
+      </script>
+    `);
+
+    const { draft } = await extractJobDraft(OTHER);
+    expect(draft.job_title).toBe('Platform Engineer');
+  });
+
+  it('matches provider stable job IDs across different Indeed URL shapes', async () => {
+    setLocation('https://www.indeed.com/jobs?q=engineer&vjk=stable-123');
+    setHead(`
+      <script type="application/ld+json">
+        { "@type": "JobPosting", "title": "Selected Job", "url": "https://www.indeed.com/viewjob?jk=stable-123&utm_source=serp" }
+      </script>
+      <script type="application/ld+json">
+        { "@type": "JobPosting", "title": "Recommendation", "description": "Richer", "url": "https://www.indeed.com/viewjob?jk=other-999" }
+      </script>
+    `);
+
+    const { draft } = await extractJobDraft(OTHER);
+    expect(draft.job_title).toBe('Selected Job');
   });
 
   it('prefers the JobPosting whose own url matches the current page over a richer but unrelated block', async () => {
@@ -1974,6 +2006,70 @@ describe('extractJobDraft — Indeed DOM extraction', () => {
     expect(draft.external_job_id).not.toBe('shelf-999');
   });
 
+  it('waits for the selected-card identity before atomically reading a replaced pane', async () => {
+    loadFixture(
+      indeedSplitViewFixture
+        .replace('aria-pressed="true"', '')
+        .replace(
+          'data-jk="other-111"',
+          'data-jk="other-111" aria-pressed="true"',
+        ),
+      'https://www.indeed.com/jobs?q=engineer&vjk=selected-123',
+    );
+
+    const pending = extractJobDraft(INDEED);
+    setTimeout(() => {
+      const pane = document.querySelector('.jobsearch-RightPane');
+      if (!pane) throw new Error('expected Indeed pane');
+      pane.innerHTML = `
+        <h1 class="jobsearch-JobInfoHeader-title">Other Job - job post</h1>
+        <div data-testid="inlineHeader-companyName">Elsewhere Inc</div>
+        <div data-testid="inlineHeader-companyLocation">Dallas, TX</div>
+        <div id="jobDescriptionText">The newly selected description.</div>
+      `;
+    }, 0);
+
+    const { draft } = await pending;
+    expect(draft).toMatchObject({
+      external_job_id: 'other-111',
+      job_title: 'Other Job',
+      company_name: 'Elsewhere Inc',
+      job_location: 'Dallas, TX',
+      job_description: 'The newly selected description.',
+    });
+    expect(draft.job_description).not.toBe('Lead the platform team.');
+  });
+
+  it('keeps outermost semantics for a large nested primary-card list without pairwise containment scans', async () => {
+    setLocation('https://www.indeed.com/jobs?q=engineer');
+    const cards = Array.from(
+      { length: 200 },
+      (_, index) => `
+      <div class="job_seen_beacon">
+        <div class="job_seen_beacon">
+          <a data-jk="job-${String(index)}" ${index === 199 ? 'aria-pressed="true"' : ''}>Job ${String(index)}</a>
+        </div>
+      </div>
+    `,
+    ).join('');
+    setBody(`
+      <div id="mosaic-jobResults">${cards}</div>
+      <section class="jobsearch-RightPane">
+        <h1 class="jobsearch-JobInfoHeader-title">Job 199</h1>
+        <div id="jobDescriptionText">Selected description.</div>
+      </section>
+    `);
+    const containsSpy = vi.spyOn(Element.prototype, 'contains');
+
+    const { draft } = await extractJobDraft(INDEED);
+
+    expect(draft.external_job_id).toBe('job-199');
+    expect(draft.job_description).toBe('Selected description.');
+    // Other extraction/sanitization helpers legitimately call contains(),
+    // but card dedup must not add a call for every pair of the 400 markers.
+    expect(containsSpy.mock.calls.length).toBeLessThan(50);
+  });
+
   it('lets a uniquely title-correlated unmarked card override a stale vjk identity', async () => {
     loadFixture(
       indeedSplitViewFixture.replace(' aria-pressed="true"', ''),
@@ -2366,6 +2462,20 @@ describe('extractJobDraft — Google Jobs DOM extraction', () => {
 
   it('does not extract a dom title when no ARIA heading appears before the timeout', async () => {
     setBody('<div>No structured job panel here.</div>');
+
+    vi.useFakeTimers();
+    const pending = extractJobDraft(GOOGLE);
+    await vi.advanceTimersByTimeAsync(1800);
+    const { draft } = await pending;
+
+    expect(draft.job_title).toBeUndefined();
+  });
+
+  it('returns no candidate when multiple Google Jobs results remain ambiguous', async () => {
+    setBody(`
+      <div><div role="heading" aria-level="2">First Job</div></div>
+      <div><div role="heading" aria-level="2">Second Job</div></div>
+    `);
 
     vi.useFakeTimers();
     const pending = extractJobDraft(GOOGLE);
