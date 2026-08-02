@@ -146,6 +146,3 @@ dist
 # claude
 .claude/
 .agents/
-
-# Standalone repository; keep accidental nested copies out of this project.
-/Kaggle-AI-Security/
