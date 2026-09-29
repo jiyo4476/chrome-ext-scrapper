@@ -3,6 +3,7 @@ import { browser } from 'wxt/browser';
 import { extensionResponseSchema } from '../src/lib/messages';
 import {
   buildStableSelector,
+  findByAttribute,
   inferTemplateRule,
   listDescendantTagNames,
   PICKER_CAPTURE_MODES,
@@ -71,15 +72,17 @@ function startTemplatePicker(): void {
       <p>Optional link fix: replace part of a scraped link URL, e.g. change /rc/clk to /viewjob. Only applies to link fields.</p>
       <label>Link text to replace <input id="link-find" maxlength="200" placeholder="/rc/clk" /></label>
       <label>Replace with <input id="link-replace" maxlength="200" placeholder="/viewjob" /></label>
+      <label>Find by data-testid <input id="testid-value" maxlength="200" placeholder="company-name" /></label>
       <div class="actions">
         <button id="pick" type="button" class="primary">Select page element</button>
+        <button id="testid-find" type="button">Find by data-testid</button>
         <button id="save" type="button">Save template</button>
         <button id="cancel" type="button">Cancel</button>
       </div>
       <p id="status" role="status" aria-live="polite">No fields selected yet.</p>
       <div id="refine-panel" hidden>
         <p>Not quite the right element? Pick a tag type and step through its matches inside the highlighted container.</p>
-        <label>Tag type <select id="cycle-tag"></select></label>
+        <label id="cycle-tag-row">Tag type <select id="cycle-tag"></select></label>
         <div class="actions">
           <button id="cycle-prev" type="button">◀ Prev</button>
           <button id="cycle-next" type="button">Next ▶</button>
@@ -183,6 +186,11 @@ function startTemplatePicker(): void {
     shadow,
     '#use-match',
   );
+  const useCandidateButton = requiredElement<HTMLButtonElement>(
+    shadow,
+    '#use-candidate',
+  );
+  const cycleTagRow = requiredElement<HTMLElement>(shadow, '#cycle-tag-row');
 
   function onPointerOver(event: Event) {
     if (!selecting) return;
@@ -315,6 +323,8 @@ function startTemplatePicker(): void {
     candidate = target;
     selecting = false;
     setHighlight(target);
+    cycleTagRow.hidden = false;
+    useCandidateButton.hidden = false;
     cycleTagSelect.replaceChildren();
     for (const tag of listDescendantTagNames(target)) {
       const option = document.createElement('option');
@@ -329,10 +339,26 @@ function startTemplatePicker(): void {
     );
   }
 
+  function enterTestIdMode(matches: Element[], value: string) {
+    candidate = null;
+    selecting = false;
+    cycleMatches = matches;
+    cycleIndex = 0;
+    cycleTagRow.hidden = true;
+    useCandidateButton.hidden = true;
+    refinePanel.hidden = false;
+    setHighlight(matches[0]);
+    setStatus(
+      `Found ${String(matches.length)} element${matches.length === 1 ? '' : 's'} with data-testid="${value}".${matches.length > 1 ? ' Step through with Prev/Next, then u' : ' U'}se this match.`,
+    );
+  }
+
   function exitRefineMode() {
     candidate = null;
     cycleMatches = [];
     cycleIndex = 0;
+    cycleTagRow.hidden = false;
+    useCandidateButton.hidden = false;
     refinePanel.hidden = true;
     setHighlight(undefined);
   }
@@ -381,18 +407,15 @@ function startTemplatePicker(): void {
   cycleNextButton.addEventListener('click', () => {
     cycleTo(cycleIndex + 1);
   });
-  requiredElement<HTMLButtonElement>(shadow, '#use-candidate').addEventListener(
-    'click',
-    () => {
-      if (!candidate) return;
-      const selectedField = field.value as (typeof PICKER_FIELDS)[number];
-      const captureMode = capture.value as PickerCaptureMode;
-      if (commitTarget(candidate, selectedField, captureMode)) {
-        exitRefineMode();
-        requiredElement<HTMLButtonElement>(shadow, '#pick').focus();
-      }
-    },
-  );
+  useCandidateButton.addEventListener('click', () => {
+    if (!candidate) return;
+    const selectedField = field.value as (typeof PICKER_FIELDS)[number];
+    const captureMode = capture.value as PickerCaptureMode;
+    if (commitTarget(candidate, selectedField, captureMode)) {
+      exitRefineMode();
+      requiredElement<HTMLButtonElement>(shadow, '#pick').focus();
+    }
+  });
   useMatchButton.addEventListener('click', () => {
     const match = cycleMatches[cycleIndex];
     if (!match) return;
@@ -421,6 +444,25 @@ function startTemplatePicker(): void {
       setStatus(
         `Select the visible element for ${field.value.replaceAll('_', ' ')}.`,
       );
+    },
+  );
+  requiredElement<HTMLButtonElement>(shadow, '#testid-find').addEventListener(
+    'click',
+    () => {
+      const value = requiredElement<HTMLInputElement>(
+        shadow,
+        '#testid-value',
+      ).value.trim();
+      if (!value) {
+        setStatus('Enter a data-testid value to search for.', true);
+        return;
+      }
+      const matches = findByAttribute('data-testid', value);
+      if (matches.length === 0) {
+        setStatus(`No elements found with data-testid="${value}".`, true);
+        return;
+      }
+      enterTestIdMode(matches, value);
     },
   );
   requiredElement<HTMLButtonElement>(shadow, '#cancel').addEventListener(

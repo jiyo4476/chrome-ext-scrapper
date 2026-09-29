@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildStableSelector,
+  findByAttribute,
   inferTemplateRule,
   listDescendantTagNames,
   previewText,
@@ -161,5 +162,21 @@ describe('template element picker utilities', () => {
     longText.textContent = 'x'.repeat(200);
     document.body.append(longText);
     expect(previewText(longText, 'text')).toHaveLength(160);
+  });
+
+  it('finds elements by attribute value, scoped to a root when given', () => {
+    document.body.innerHTML = `
+      <div id="a"><span data-testid="company-name">Zillow</span></div>
+      <div id="b"><span data-testid="company-name">Acme</span></div>
+    `;
+    const root = document.querySelector('#b');
+    if (!root) throw new Error('fixture');
+    expect(findByAttribute('data-testid', 'company-name')).toHaveLength(2);
+    const scoped = findByAttribute('data-testid', 'company-name', root);
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0]?.textContent).toBe('Acme');
+
+    expect(findByAttribute('data-testid', 'missing')).toEqual([]);
+    expect(findByAttribute('data-testid', 'x"]:evil')).toEqual([]);
   });
 });

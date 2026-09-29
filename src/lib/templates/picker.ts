@@ -316,8 +316,22 @@ function escapeIdentifier(value: string): string {
     : value.replace(/(^-?\d)|[^a-zA-Z0-9_-]/g, (match) => `\\${match}`);
 }
 
-function escapeAttribute(value: string): string {
+export function escapeAttribute(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+export function findByAttribute(
+  attribute: string,
+  value: string,
+  root: ParentNode = document,
+): Element[] {
+  try {
+    return [
+      ...root.querySelectorAll(`[${attribute}="${escapeAttribute(value)}"]`),
+    ];
+  } catch {
+    return [];
+  }
 }
 
 function looksStableToken(value: string, allowSpaces = false): boolean {
