@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  buildGenericSelector,
   buildStableSelector,
   findByAttribute,
   inferTemplateRule,
@@ -178,5 +179,21 @@ describe('template element picker utilities', () => {
 
     expect(findByAttribute('data-testid', 'missing')).toEqual([]);
     expect(findByAttribute('data-testid', 'x"]:evil')).toEqual([]);
+  });
+
+  it('builds a non-unique selector for repeated list/item elements, skipping generated classes', () => {
+    document.body.innerHTML = `
+      <div class="cardOutline css-rhoekz eu4oa1w0"></div>
+      <ul class="css-pygyny"></ul>
+      <li></li>
+    `;
+    const card = document.querySelector('.cardOutline');
+    const list = document.querySelector('ul');
+    const item = document.querySelector('li');
+    if (!card || !list || !item) throw new Error('fixture');
+
+    expect(buildGenericSelector(card)).toBe('div.cardOutline');
+    expect(buildGenericSelector(list)).toBe('ul');
+    expect(buildGenericSelector(item)).toBe('li');
   });
 });

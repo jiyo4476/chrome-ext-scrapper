@@ -2,6 +2,7 @@ import { browser } from 'wxt/browser';
 
 import { extensionResponseSchema } from '../src/lib/messages';
 import {
+  buildGenericSelector,
   buildStableSelector,
   findByAttribute,
   inferTemplateRule,
@@ -48,6 +49,9 @@ function startTemplatePicker(): void {
       label { display: grid; gap: 4px; margin: 10px 0; font-weight: 600; }
       input, select, button { box-sizing: border-box; min-height: 34px; font: inherit; }
       input, select { width: 100%; padding: 6px; border: 1px solid #9ca3af; border-radius: 5px; }
+      .field-row { display: flex; gap: 6px; align-items: center; }
+      .field-row input { flex: 1; min-width: 0; }
+      .field-row button { flex-shrink: 0; }
       button { padding: 6px 10px; border: 1px solid #6b7280; border-radius: 5px; background: #f9fafb; color: #111827; cursor: pointer; }
       button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
       button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #f59e0b; outline-offset: 2px; }
@@ -64,13 +68,25 @@ function startTemplatePicker(): void {
       <label>Template name <input id="name" maxlength="120" /></label>
       <label>Matching path <input id="path" maxlength="500" /></label>
       <p>Optional list selection: limit extraction to the active item in a repeated job list.</p>
-      <label>List container selector <input id="list-selector" maxlength="500" placeholder="ul.job-list" /></label>
-      <label>List item selector <input id="item-selector" maxlength="500" placeholder="li.job-card" /></label>
+      <label>List container selector
+        <div class="field-row">
+          <input id="list-selector" maxlength="500" placeholder="ul.job-list" />
+          <button id="pick-list-selector" type="button">Select on page</button>
+        </div>
+      </label>
+      <label>List item selector
+        <div class="field-row">
+          <input id="item-selector" maxlength="500" placeholder="li.job-card" />
+          <button id="pick-item-selector" type="button">Select on page</button>
+        </div>
+      </label>
       <label>Active item class <input id="active-class" maxlength="100" placeholder="vjs-highlight" /></label>
       <label>Capture <select id="capture"></select></label>
-      <p>Optional link fix: replace part of a scraped link URL, e.g. change /rc/clk to /viewjob. Only applies to link fields.</p>
-      <label>Link text to replace <input id="link-find" maxlength="200" placeholder="/rc/clk" /></label>
-      <label>Replace with <input id="link-replace" maxlength="200" placeholder="/viewjob" /></label>
+      <div id="link-fix" hidden>
+        <p>Optional link fix: replace part of a scraped link URL, e.g. change /rc/clk to /viewjob.</p>
+        <label>Link text to replace <input id="link-find" maxlength="200" placeholder="/rc/clk" /></label>
+        <label>Replace with <input id="link-replace" maxlength="200" placeholder="/viewjob" /></label>
+      </div>
       <label>Find by data-testid <input id="testid-value" maxlength="200" placeholder="company-name" /></label>
       <label>Job field <select id="field"></select></label>
       <div class="actions">
@@ -105,6 +121,12 @@ function startTemplatePicker(): void {
     option.textContent = optionValue.replaceAll('_', ' ');
     field.append(option);
   }
+  const linkFixRow = requiredElement<HTMLElement>(shadow, '#link-fix');
+  const updateLinkFixVisibility = () => {
+    linkFixRow.hidden = field.value !== 'job_link';
+  };
+  field.addEventListener('change', updateLinkFixVisibility);
+  updateLinkFixVisibility();
   const capture = requiredElement<HTMLSelectElement>(shadow, '#capture');
   for (const mode of PICKER_CAPTURE_MODES) {
     const option = document.createElement('option');
@@ -125,6 +147,7 @@ function startTemplatePicker(): void {
 
   const rules = new Map<string, SiteTemplateRule>();
   let selecting = false;
+  let pickingSelectorFor: 'list-selector' | 'item-selector' | null = null;
 
   const cleanup = () => {
     document.removeEventListener('pointerover', onPointerOver, true);
@@ -193,11 +216,21 @@ function startTemplatePicker(): void {
   const cycleTagRow = requiredElement<HTMLElement>(shadow, '#cycle-tag-row');
 
   function onPointerOver(event: Event) {
-    if (!selecting) return;
+    if (!selecting && !pickingSelectorFor) return;
     const target = event.target;
     if (target instanceof Element && !event.composedPath().includes(host)) {
       setHighlight(target);
     }
+  }
+
+  function startPickingSelector(inputId: 'list-selector' | 'item-selector') {
+    selecting = false;
+    if (!refinePanel.hidden) exitRefineMode();
+    pickingSelectorFor = inputId;
+    setHighlight(undefined);
+    setStatus(
+      `Click the ${inputId === 'list-selector' ? 'list container' : 'a list item'} element on the page.`,
+    );
   }
 
   function commitTarget(
@@ -322,6 +355,7 @@ function startTemplatePicker(): void {
   function enterRefineMode(target: Element) {
     candidate = target;
     selecting = false;
+    pickingSelectorFor = null;
     setHighlight(target);
     cycleTagRow.hidden = false;
     useCandidateButton.hidden = false;
@@ -342,6 +376,7 @@ function startTemplatePicker(): void {
   function enterTestIdMode(matches: Element[], value: string) {
     candidate = null;
     selecting = false;
+    pickingSelectorFor = null;
     cycleMatches = matches;
     cycleIndex = 0;
     cycleTagRow.hidden = true;
@@ -364,7 +399,25 @@ function startTemplatePicker(): void {
   }
 
   function onPageClick(event: MouseEvent) {
-    if (!selecting || event.composedPath().includes(host)) return;
+    if (event.composedPath().includes(host)) return;
+    if (pickingSelectorFor) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const selector = buildGenericSelector(target);
+      requiredElement<HTMLInputElement>(
+        shadow,
+        `#${pickingSelectorFor}`,
+      ).value = selector;
+      setStatus(
+        `Set ${pickingSelectorFor === 'list-selector' ? 'list container selector' : 'list item selector'} to “${selector}”.`,
+      );
+      pickingSelectorFor = null;
+      setHighlight(undefined);
+      return;
+    }
+    if (!selecting) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     const target = event.target;
@@ -386,7 +439,11 @@ function startTemplatePicker(): void {
       }
     }
     if (event.key !== 'Escape') return;
-    if (!refinePanel.hidden) {
+    if (pickingSelectorFor) {
+      pickingSelectorFor = null;
+      setHighlight(undefined);
+      setStatus('Selector pick cancelled.');
+    } else if (!refinePanel.hidden) {
       exitRefineMode();
       setStatus('Refinement cancelled.');
       requiredElement<HTMLButtonElement>(shadow, '#pick').focus();
@@ -441,11 +498,24 @@ function startTemplatePicker(): void {
     'click',
     () => {
       selecting = true;
+      pickingSelectorFor = null;
       setStatus(
         `Select the visible element for ${field.value.replaceAll('_', ' ')}.`,
       );
     },
   );
+  requiredElement<HTMLButtonElement>(
+    shadow,
+    '#pick-list-selector',
+  ).addEventListener('click', () => {
+    startPickingSelector('list-selector');
+  });
+  requiredElement<HTMLButtonElement>(
+    shadow,
+    '#pick-item-selector',
+  ).addEventListener('click', () => {
+    startPickingSelector('item-selector');
+  });
   requiredElement<HTMLButtonElement>(shadow, '#testid-find').addEventListener(
     'click',
     () => {

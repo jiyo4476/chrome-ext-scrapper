@@ -95,6 +95,15 @@ function describeStep(current: Element, parent: Element): string {
   return `${base}:nth-of-type(${String(sameTag.indexOf(current) + 1)})`;
 }
 
+// Unlike buildStableSelector, this is deliberately non-unique: list/item
+// selectors must match every repeated card on the page, not just the one
+// element that was clicked.
+export function buildGenericSelector(element: Element): string {
+  const tag = element.tagName.toLowerCase();
+  const classes = stableClasses(element);
+  return classes.length > 0 ? `${tag}.${classes.join('.')}` : tag;
+}
+
 function scopeRoot(element: Element, root: ParentNode): ParentNode {
   return root instanceof Element && root !== element && root.contains(element)
     ? root
