@@ -67,12 +67,12 @@ function startTemplatePicker(): void {
       <label>List container selector <input id="list-selector" maxlength="500" placeholder="ul.job-list" /></label>
       <label>List item selector <input id="item-selector" maxlength="500" placeholder="li.job-card" /></label>
       <label>Active item class <input id="active-class" maxlength="100" placeholder="vjs-highlight" /></label>
-      <label>Job field <select id="field"></select></label>
       <label>Capture <select id="capture"></select></label>
       <p>Optional link fix: replace part of a scraped link URL, e.g. change /rc/clk to /viewjob. Only applies to link fields.</p>
       <label>Link text to replace <input id="link-find" maxlength="200" placeholder="/rc/clk" /></label>
       <label>Replace with <input id="link-replace" maxlength="200" placeholder="/viewjob" /></label>
       <label>Find by data-testid <input id="testid-value" maxlength="200" placeholder="company-name" /></label>
+      <label>Job field <select id="field"></select></label>
       <div class="actions">
         <button id="pick" type="button" class="primary">Select page element</button>
         <button id="testid-find" type="button">Find by data-testid</button>
